@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment } from "react";
+import React, { useState, useEffect, useRef, Fragment } from "react";
 import { Scale, LineChart as CurveIcon, ArrowLeftRight, Trash2, Plus, ChevronLeft, ChevronRight, ChevronDown, RotateCcw, Newspaper, Share2, X, Download, Upload, Copy, Sun, Moon, Bell, Info, Camera, Pencil, Check, Clock, Lightbulb, BookOpen, ClipboardCheck, TrendingUp, Flame, Target, FileText, Search, Minus, WrapText, CalendarClock, Image as ImageIcon } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -23,6 +23,56 @@ import {
   Radar,
   Legend,
 } from "recharts";
+
+// --- localStorage shim for window.storage (drop-in replacement) ---
+if (typeof window !== "undefined" && !window.storage) {
+  window.storage = {
+    async get(key, shared = false) {
+      const raw = localStorage.getItem(key);
+      if (raw === null) {
+        // Matches the original API: missing keys throw, not return null
+        throw new Error(`Key not found: ${key}`);
+      }
+      return { key, value: raw, shared: !!shared };
+    },
+
+    async set(key, value, shared = false) {
+      try {
+        localStorage.setItem(key, value);
+        return { key, value, shared: !!shared };
+      } catch (err) {
+        // e.g. quota exceeded (common with lots of base64 screenshots)
+        console.error("localStorage set failed:", err);
+        return null;
+      }
+    },
+
+    async delete(key, shared = false) {
+      try {
+        localStorage.removeItem(key);
+        return { key, deleted: true, shared: !!shared };
+      } catch (err) {
+        console.error("localStorage delete failed:", err);
+        return null;
+      }
+    },
+
+    async list(prefix = "", shared = false) {
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(prefix)) keys.push(k);
+        }
+        return { keys, prefix, shared: !!shared };
+      } catch (err) {
+        console.error("localStorage list failed:", err);
+        return null;
+      }
+    },
+  };
+}
+
 
 const DARK_PALETTE = {
   bg: "#0A0E16",
@@ -784,8 +834,7 @@ function computePlaybookStats(rules, checkins) {
 }
 
 const MARKET_SESSIONS = [
-  { id: "sydney", label: "Sydney", startUTC: 22, endUTC: 7, color: "#6C8EBF" },
-  { id: "tokyo", label: "Tokyo", startUTC: 0, endUTC: 9, color: "#BF6C8E" },
+  { id: "asia", label: "Asia", startUTC: 22, endUTC: 9, color: "#6C8EBF" },
   { id: "london", label: "London", startUTC: 8, endUTC: 17, color: "#6CBF8E" },
   { id: "newyork", label: "New York", startUTC: 13, endUTC: 22, color: "#BFA26C" },
 ];
@@ -6696,8 +6745,8 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
       const totalTableWidth =
         JOURNAL_TOGGLE_COL_WIDTH + JOURNAL_COLUMNS.reduce((s, c) => s + journalColWidths[c.id], 0) + 36;
 
-      const cellInputStyle = { color: palette.text, fontFamily: mono, fontSize: "13px", border: "none" };
-      const detailFieldStyle = { color: palette.text, fontFamily: mono, fontSize: "13px", border: "none" };
+      const cellInputStyle = { color: palette.text, fontFamily: mono, fontSize: "10px", border: "none" };
+      const detailFieldStyle = { color: palette.text, fontFamily: mono, fontSize: "10px", border: "none" };
 
       const autoResizeTextarea = (el) => {
         if (!el) return;
@@ -6815,112 +6864,118 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
         );
       };
 
-      const renderDetailField = (row, field) => {
-        const dateForRow = row.date;
-        if (field.id === "session") {
-          const val = row.session || "";
-          return (
-            <select
-              value={val}
-              onChange={(e) => updateJournalField(row.id, "session", e.target.value, dateForRow)}
-              className="w-full bg-transparent outline-none appearance-none"
-              style={{
-                ...detailFieldStyle,
-                color: val ? palette.text : palette.textFaint,
-                border: `1px solid ${palette.border}`,
-                borderRadius: "6px",
-                padding: "8px 10px",
-              }}
-            >
-              <option value="" style={{ background: palette.field, color: palette.textFaint }}>
-                Add session
-              </option>
-              {MARKET_SESSIONS.map((s) => (
-                <option key={s.id} value={s.id} style={{ background: palette.field, color: palette.text }}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          );
-        }
-        if (field.id === "mood") {
-          const val = row.mood || "";
-          return (
-            <select
-              value={val}
-              onChange={(e) => updateJournalField(row.id, "mood", e.target.value, dateForRow)}
-              className="w-full bg-transparent outline-none appearance-none"
-              style={{
-                ...detailFieldStyle,
-                color: val ? palette.text : palette.textFaint,
-                border: `1px solid ${palette.border}`,
-                borderRadius: "6px",
-                padding: "8px 10px",
-              }}
-            >
-              <option value="" style={{ background: palette.field, color: palette.textFaint }}>
-                Add mood
-              </option>
-              {EMOTIONS.map((e) => (
-                <option key={e.id} value={e.id} style={{ background: palette.field, color: palette.text }}>
-                  {e.emoji} {e.label}
-                </option>
-              ))}
-            </select>
-          );
-        }
-        if (field.id === "confidence") {
-          const val = row.confidence || "";
-          return (
-            <select
-              value={val}
-              onChange={(e) => updateJournalField(row.id, "confidence", e.target.value, dateForRow)}
-              className="w-full bg-transparent outline-none appearance-none"
-              style={{
-                ...detailFieldStyle,
-                color: val ? palette.text : palette.textFaint,
-                border: `1px solid ${palette.border}`,
-                borderRadius: "6px",
-                padding: "8px 10px",
-              }}
-            >
-              <option value="" style={{ background: palette.field, color: palette.textFaint }}>
-                Add confidence
-              </option>
-              {CONFIDENCE_OPTIONS.map((c) => (
-                <option key={c.id} value={c.id} style={{ background: palette.field, color: palette.text }}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          );
-        }
-        return (
-          <textarea
-            value={row[field.id] || ""}
-            onChange={(e) => {
-              updateJournalField(row.id, field.id, e.target.value, dateForRow);
-              autoResizeTextarea(e.target);
-            }}
-            ref={autoResizeTextarea}
-            placeholder={field.id === "note" ? "Add note" : "Add mistake"}
-            rows={1}
-            className="w-full bg-transparent outline-none block"
-            style={{
-              ...detailFieldStyle,
-              border: `1px solid ${palette.border}`,
-              borderRadius: "6px",
-              padding: "8px 10px",
-              resize: "none",
-              overflow: "hidden",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "break-word",
-              wordBreak: "break-word",
-              lineHeight: "1.5",
-            }}
-          />
-        );
-      };
+const renderDetailField = (row, field) => {
+  const dateForRow = row.date;
+  if (field.id === "session") {
+    const val = row.session || "";
+    return (
+      <select
+        value={val}
+        onChange={(e) => updateJournalField(row.id, "session", e.target.value, dateForRow)}
+        className="w-full bg-transparent outline-none appearance-none"
+        style={{
+          ...detailFieldStyle,
+          color: val ? palette.text : palette.textFaint,
+          border: `1px solid ${palette.border}`,
+          borderRadius: "6px",
+          padding: "6px 8px",
+        }}
+      >
+        <option value="" style={{ background: palette.field, color: palette.textFaint }}>
+          Add session
+        </option>
+        {MARKET_SESSIONS.map((s) => (
+          <option key={s.id} value={s.id} style={{ background: palette.field, color: palette.text }}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (field.id === "mood") {
+    const val = row.mood || "";
+    return (
+      <select
+        value={val}
+        onChange={(e) => updateJournalField(row.id, "mood", e.target.value, dateForRow)}
+        className="w-full bg-transparent outline-none appearance-none"
+        style={{
+          ...detailFieldStyle,
+          color: val ? palette.text : palette.textFaint,
+          border: `1px solid ${palette.border}`,
+          borderRadius: "6px",
+          padding: "6px 8px",
+        }}
+      >
+        <option value="" style={{ background: palette.field, color: palette.textFaint }}>
+          Add mood
+        </option>
+        {EMOTIONS.map((e) => (
+          <option key={e.id} value={e.id} style={{ background: palette.field, color: palette.text }}>
+            {e.emoji} {e.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (field.id === "confidence") {
+    const val = row.confidence || "";
+    return (
+      <select
+        value={val}
+        onChange={(e) => updateJournalField(row.id, "confidence", e.target.value, dateForRow)}
+        className="w-full bg-transparent outline-none appearance-none"
+        style={{
+          ...detailFieldStyle,
+          color: val ? palette.text : palette.textFaint,
+          border: `1px solid ${palette.border}`,
+          borderRadius: "6px",
+          padding: "6px 8px",
+        }}
+      >
+        <option value="" style={{ background: palette.field, color: palette.textFaint }}>
+          Add confidence
+        </option>
+        {CONFIDENCE_OPTIONS.map((c) => (
+          <option key={c.id} value={c.id} style={{ background: palette.field, color: palette.text }}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  return (
+    <textarea
+      value={row[field.id] || ""}
+      onChange={(e) => {
+        updateJournalField(row.id, field.id, e.target.value, dateForRow);
+        autoResizeTextarea(e.target);
+      }}
+      ref={autoResizeTextarea}
+      placeholder={
+        field.id === "note"
+          ? "Add note"
+          : field.id === "mistake"
+          ? "Add mistake"
+          : `Add ${field.label.toLowerCase()}`
+      }
+      rows={1}
+      className="w-full bg-transparent outline-none block"
+      style={{
+        ...detailFieldStyle,
+        border: `1px solid ${palette.border}`,
+        borderRadius: "6px",
+        padding: "6px 8px",
+        resize: "none",
+        overflow: "hidden",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "break-word",
+        wordBreak: "break-word",
+        lineHeight: "1.5",
+      }}
+    />
+  );
+};
 
       body = (
         <>
@@ -7110,11 +7165,15 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
                                   padding: "14px 16px",
                                 }}
                               >
-                                <div className="grid grid-cols-2 gap-3 mb-3">
-                                  {JOURNAL_DETAIL_FIELDS.filter(
-                                    (f) => f.id === "session" || f.id === "mood" || f.id === "confidence"
-                                  ).map((field) => (
-                                    <div key={field.id}>
+                                <div
+                                  style={{
+                                    position: "sticky",
+                                    left: 0,
+                                    width: "min(86vw, 300px)",
+                                  }}
+                                >
+                                  {JOURNAL_DETAIL_FIELDS.map((field) => (
+                                    <div key={field.id} className="mb-2">
                                       <span
                                         className="block mb-1 uppercase"
                                         style={{ color: palette.textFaint, letterSpacing: "0.06em", fontSize: "10px" }}
@@ -7125,17 +7184,6 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
                                     </div>
                                   ))}
                                 </div>
-                                {JOURNAL_DETAIL_FIELDS.filter((f) => f.id === "mistake" || f.id === "note").map((field) => (
-                                  <div key={field.id} className="mb-3">
-                                    <span
-                                      className="block mb-1 uppercase"
-                                      style={{ color: palette.textFaint, letterSpacing: "0.06em", fontSize: "10px" }}
-                                    >
-                                      {field.label}
-                                    </span>
-                                    {renderDetailField(row, field)}
-                                  </div>
-                                ))}
                               </td>
                             </tr>
                           )}
@@ -8239,7 +8287,7 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
           })}
 
           <p className="text-xs mt-2 mb-4" style={{ color: palette.textFaint }}>
-            Standard session hours in UTC: Sydney 22:00–07:00, Tokyo 00:00–09:00, London 08:00–17:00,
+            Standard session hours in UTC: Asia 22:00–09:00, London 08:00–17:00,
             New York 13:00–22:00. Shown here converted to your device's local time (
             {tzName || "detected automatically"}), not adjusted for daylight saving.
           </p>
