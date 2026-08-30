@@ -5975,6 +5975,42 @@ const ensureJournalRowForDate = (dateKey, setupId) => {
           </>
         )}
 
+{setupRadarData.rows.length > 0 && (
+  <>
+    <span
+      className="block mb-1.5 uppercase"
+      style={{ color: palette.textMuted, letterSpacing: "0.08em", fontSize: "11px" }}
+    >
+      Setup Radar
+    </span>
+    <div
+      className="rounded-2xl p-4 mb-6"
+      style={{ background: palette.surface, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}
+    >
+      <div style={{ width: "100%", height: 260 }}>
+        <ResponsiveContainer>
+          <RadarChart data={setupRadarData.rows}>
+            <PolarGrid stroke={palette.border} />
+            <PolarAngleAxis dataKey="label" tick={{ fill: palette.textMuted, fontSize: 10, fontFamily: mono }} />
+            <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: palette.textFaint, fontSize: 9, fontFamily: mono }} />
+            <Radar name="Frequency" dataKey="Frequency" stroke={palette.gold} fill={palette.gold} fillOpacity={0.3} />
+            <Radar name="Avg R:R" dataKey="Avg R:R" stroke={palette.green} fill={palette.green} fillOpacity={0.25} />
+            <Radar name="Clean Rate" dataKey="Clean Rate" stroke={palette.goldBright} fill={palette.goldBright} fillOpacity={0.2} />
+            <Legend wrapperStyle={{ fontFamily: mono, fontSize: "10px", color: palette.textMuted }} />
+            <Tooltip
+              contentStyle={{ background: palette.field, border: `1px solid ${palette.border}`, borderRadius: "8px", fontFamily: mono, fontSize: "12px" }}
+              labelStyle={{ color: palette.textMuted }}
+            />
+          </RadarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+    <p className="text-xs mb-6" style={{ color: palette.textFaint }}>
+      Frequency = how often you use that setup vs. your most-used one. Avg R:R = average planned R:R vs. your best setup. Clean Rate = % of entries with no mistake logged.
+    </p>
+  </>
+)}
+
         {rrSeries.length > 1 && (
           <>
             <span
