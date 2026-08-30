@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A0E16" />
+<title>Ledger — Trade Math Calculator</title>
+<meta name="description" content="Trade math calculator, journal, and trading tools." />
+
+  
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon.png" />
+<link rel="apple-touch-icon" href="icon.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap"
+  rel="stylesheet"
+/>
+
+<!-- Tailwind (utility classes only — matches the classNames used in LedgerApp.jsx) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #05070C; }
+  #root { height: 100%; }
+  #boot-msg {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #7C8AA0; font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    background: #05070C; text-align: center; padding: 24px;
+  }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot-msg">Loading Ledger&hellip;</div></div>
+
+<!-- Babel standalone: transforms the JSX in LedgerApp.jsx at runtime, no build step needed -->
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+
+<!-- Import map: lets bare specifiers like "react" resolve to CDN ES modules -->
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?external=react",
+    "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom"
+  }
+}
+</script>
+
+<script type="module">
+  import React from "react";
+  import { createRoot } from "react-dom/client";
+
+  async function boot() {
+    try {
+      const res = await fetch("./LedgerApp.jsx", { cache: "no-cache" });
+      if (!res.ok) throw new Error("Couldn't fetch LedgerApp.jsx (HTTP " + res.status + ")");
+      const source = await res.text();
+
+      const { code } = Babel.transform(source, {
+        presets: ["react"],
+        filename: "LedgerApp.jsx",
+        sourceType: "module",
+      });
+
+      const blob = new Blob([code], { type: "text/javascript" });
+      const blobUrl = URL.createObjectURL(blob);
+      const mod = await import(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+
+      const LedgerApp = mod.default;
+      createRoot(document.getElementById("root")).render(React.createElement(LedgerApp));
+
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      }
+    } catch (err) {
+      console.error(err);
+      document.getElementById("root").innerHTML =
+        '<div id="boot-msg">Failed to load Ledger.<br/>' +
+        (err && err.message ? err.message : "Unknown error") +
+        "</div>";
+    }
+  }
+
+  boot();
+</script>
+</body>
+</html>
