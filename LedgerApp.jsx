@@ -14558,35 +14558,52 @@ if (activeTab === "community") {
 
         {/* Composer */}
         <div
-          className="flex-shrink-0 px-4 pt-3 pb-4 relative"
-          style={{ borderTop: `1px solid ${palette.border}`, background: palette.surface }}
+          className="flex-shrink-0 relative"
+          style={{
+            borderTop: `1px solid ${palette.border}`,
+            background: palette.surface,
+            padding: isDesktop ? "12px 16px 16px" : "8px 12px 12px",
+          }}
         >
-          <div className="flex gap-1.5 mb-2.5">
-            {[
-              { id: "chat", label: "Message", icon: FileText },
-              { id: "signal", label: "Signal", icon: TrendingUp },
-            ].map((mode) => {
-              const active = communityMsgMode === mode.id;
-              const Icon = mode.icon;
-              return (
-                <button
-                  key={mode.id}
-                  type="button"
-                  onClick={() => setCommunityMsgMode(mode.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors ${TAP}`}
-                  style={{
-                    background: active ? palette.gold : palette.field,
-                    color: active ? palette.letterbox : palette.textMuted,
-                    border: `1px solid ${active ? palette.gold : palette.border}`,
-                    fontFamily: mono, fontSize: "11.5px", fontWeight: 700,
-                  }}
-                >
-                  <Icon size={12} />
-                  {mode.label}
-                </button>
-              );
-            })}
-          </div>
+          <div
+            className="flex mb-2 flex-shrink-0"
+            style={{
+              background: palette.field,
+              border: `1px solid ${palette.border}`,
+              borderRadius: "10px",
+              padding: "3px",
+              width: isDesktop ? "auto" : "84px",
+            }}
+          >
+    {[
+      { id: "chat", label: "Message", icon: FileText },
+      { id: "signal", label: "Signal", icon: TrendingUp },
+    ].map((mode) => {
+      const active = communityMsgMode === mode.id;
+      const Icon = mode.icon;
+      return (
+        <button
+          key={mode.id}
+          type="button"
+          onClick={() => setCommunityMsgMode(mode.id)}
+          aria-label={mode.label}
+          className={`flex items-center justify-center gap-1.5 rounded-lg transition-colors ${TAP}`}
+          style={{
+            flex: 1,
+            padding: isDesktop ? "6px 12px" : "6px 0",
+            background: active ? palette.gold : "transparent",
+            color: active ? palette.letterbox : palette.textMuted,
+            fontFamily: mono,
+            fontSize: "11.5px",
+            fontWeight: 700,
+          }}
+        >
+          <Icon size={13} />
+          {isDesktop && mode.label}
+        </button>
+      );
+    })}
+  </div>
 
           {communityMsgMode === "signal" && (
             <div
@@ -14639,9 +14656,9 @@ if (activeTab === "community") {
               value={communityMsgText}
               onChange={(e) => setCommunityMsgText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendCommunityMessage(); } }}
-              placeholder={communityMsgMode === "signal" ? "Add a note (optional)" : "Type a message…"}
-              className="flex-1 bg-transparent py-3 outline-none"
-              style={{ color: palette.text, fontSize: "14px" }}
+              placeholder={communityMsgMode === "signal" ? "Add a note (optional)" : "Message"}
+              className={isDesktop ? "flex-1 bg-transparent py-3 outline-none" : "flex-1 bg-transparent py-3.5 outline-none"}
+              style={{ color: palette.text, fontSize: isDesktop ? "14px" : "15px" }}
             />
             <button
               type="button"
@@ -14649,7 +14666,8 @@ if (activeTab === "community") {
               disabled={communityMsgMode === "signal" ? !signalPair.trim() : !communityMsgText.trim()}
               className={`flex items-center justify-center rounded-full flex-shrink-0 ${TAP}`}
               style={{
-                width: "40px", height: "40px",
+                width: isDesktop ? "40px" : "42px",
+                height: isDesktop ? "40px" : "42px",
                 background: `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`,
                 color: palette.letterbox,
                 boxShadow: `0 3px 10px ${palette.gold}44`,
