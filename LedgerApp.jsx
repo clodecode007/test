@@ -14900,17 +14900,14 @@ const renderSidebar = () => (
 } else if (isDesktop) {
     // ---------- DESKTOP: persistent sidebar + chat pane (Discord/Telegram merged) ----------
     body = (
-      <div
-        className="flex gap-4"
-        style={{ height: "calc(100vh - 148px)" }}
-      >
+      <div className="flex gap-4 flex-1" style={{ minHeight: 0 }}>
         {renderSidebar()}
         <div
           className="flex-1 min-w-0 rounded-2xl overflow-hidden"
           style={{ border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}
         >
           {activeGroupId ? (
-            renderChatPanel({ background: palette.bg })
+            renderChatPanel({ background: palette.bg, height: "100%" })
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center px-8" style={{ background: palette.bg }}>
               <span
@@ -15124,7 +15121,7 @@ const renderSidebar = () => (
     );
   } else {
     // ---------- MOBILE CHAT ----------
-    body = renderChatPanel({ height: "calc(100dvh - 190px)", minHeight: "420px" });
+    body = renderChatPanel({ height: "100%" });
   }
 }
 
@@ -15326,12 +15323,30 @@ const renderSidebar = () => (
           </div>
         </header>
 
-        <main
-          className={isDesktop ? "px-8 py-6" : "px-5 py-5"}
-          style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" }}
-        >
-          {body}
-        </main>
+        {(() => {
+          const communityFullBleed = activeTab === "community" && (isDesktop || !!activeGroupId);
+          return (
+            <main
+              className={
+                communityFullBleed
+                  ? (isDesktop ? "px-8" : "px-0")
+                  : (isDesktop ? "px-8 py-6" : "px-5 py-5")
+              }
+              style={{
+                flex: "1 1 auto",
+                minHeight: 0,
+                overflowY: communityFullBleed ? "hidden" : "auto",
+                WebkitOverflowScrolling: "touch",
+                display: communityFullBleed ? "flex" : "block",
+                flexDirection: "column",
+                paddingTop: communityFullBleed ? (isDesktop ? "24px" : 0) : undefined,
+                paddingBottom: communityFullBleed ? (isDesktop ? "24px" : 0) : undefined,
+              }}
+            >
+              {body}
+            </main>
+          );
+        })()}
         </div>
 
 
