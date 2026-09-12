@@ -1185,6 +1185,7 @@ const COMMUNITY_API_BASE = "https://ledger-community.ledgercalc.workers.dev";
 const COMMUNITY_USERNAME_KEY = "community:username";
 const COMMUNITY_MEMBERSHIPS_KEY = "community:memberships";
 const COMMUNITY_MESSAGE_POLL_MS = 6000;
+const COMMUNITY_JOIN_REQUESTS_KEY = "community:join-requests";
 
 async function communityApi(path, options = {}) {
   if (!COMMUNITY_API_BASE || COMMUNITY_API_BASE.includes("PASTE-YOUR")) {
@@ -4230,6 +4231,18 @@ const [newPostImage, setNewPostImage] = useState(null);
 const [postImageUploading, setPostImageUploading] = useState(false);
 const postImageInputRef = useRef(null);
 const [pinnedMessageId, setPinnedMessageId] = useState(null);
+const [replyingTo, setReplyingTo] = useState(null); // { id, author, preview }
+const [openRoleMenuFor, setOpenRoleMenuFor] = useState(null); // username whose role menu is open
+const [communityLobbyTab, setCommunityLobbyTab] = useState("mine"); // "mine" | "discover"
+const [discoverGroups, setDiscoverGroups] = useState([]);
+const [discoverLoaded, setDiscoverLoaded] = useState(false);
+const [discoverSearch, setDiscoverSearch] = useState("");
+const [pendingJoinRequests, setPendingJoinRequests] = useState([]);
+const [pendingJoinRequestsLoaded, setPendingJoinRequestsLoaded] = useState(false);
+const [groupJoinRequests, setGroupJoinRequests] = useState([]);
+const [groupJoinRequestsLoaded, setGroupJoinRequestsLoaded] = useState(false);
+const [newGroupPublic, setNewGroupPublic] = useState(false);
+const [newGroupTags, setNewGroupTags] = useState("");
 
 const renameCommunityGroup = async () => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
@@ -4281,6 +4294,41 @@ const demoteAdmin = async (username) => {
     setManageMsg(`${username} is no longer an admin.`);
   } catch (err) {
     setManageMsg(err.message || "Couldn't remove admin.");
+  }
+};
+
+const promoteToSignalProvider = async (username) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  const myMember = groupMembersList.find((m) => m.username === communityUsername);
+  const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
+  if (!membership || !isOwner) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/signal-providers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${membership.token}` },
+      body: JSON.stringify({ member: username }),
+    });
+    setGroupMembersList((cur) => cur.map((m) => (m.username === username ? { ...m, isSignalProvider: true } : m)));
+    setManageMsg(`${username} can now post signals.`);
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't update that member.");
+  }
+};
+
+const demoteSignalProvider = async (username) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  const myMember = groupMembersList.find((m) => m.username === communityUsername);
+  const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
+  if (!membership || !isOwner) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/signal-providers/${encodeURIComponent(username)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setGroupMembersList((cur) => cur.map((m) => (m.username === username ? { ...m, isSignalProvider: false } : m)));
+    setManageMsg(`${username} can no longer post signals.`);
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't update that member.");
   }
 };
 
@@ -4354,12 +4402,15 @@ const deleteCommunityGroupPermanently = async () => {
 
 useEffect(() => {
   setCommunityPanelTab("chat");
+  setOpenRoleMenuFor(null);
+  setReplyingTo(null);
   if (!activeGroupId) {
     setGroupMembersList([]);
     setGroupMembersLoaded(false);
     setPinnedMessageId(null);
     return;
   }
+
   const membership = myGroups.find((g) => g.id === activeGroupId);
   if (!membership) return;
   let cancelled = false;
@@ -4553,6 +4604,26 @@ const deleteCommunityPost = async (postId) => {
     })();
     return () => { cancelled = true; };
   }, []);
+
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await window.storage.get(COMMUNITY_JOIN_REQUESTS_KEY, false);
+        if (!cancelled && res && res.value) {
+          const parsed = JSON.parse(res.value);
+          if (Array.isArray(parsed)) setPendingJoinRequests(parsed);
+        }
+      } catch (err) {
+        // non-critical, fail silently
+      } finally {
+        if (!cancelled) setPendingJoinRequestsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
 
   // Load (and poll) messages for whichever group is open, from the real backend
   useEffect(() => {
@@ -5328,7 +5399,14 @@ useEffect(() => {
     try {
       const data = await communityApi("/groups", {
         method: "POST",
-        body: JSON.stringify({ name, description: newGroupDesc.trim(), code, username: communityUsername }),
+        body: JSON.stringify({
+          name,
+          description: newGroupDesc.trim(),
+          code,
+          username: communityUsername,
+          isPublic: newGroupPublic,
+          tags: newGroupTags.split(",").map((t) => t.trim()).filter(Boolean),
+        }),
       });
       const membership = { id: data.id, token: data.token, name: data.name, description: data.description, role: "owner" };
       await persistMyGroups([...myGroups, membership]);
@@ -5336,6 +5414,8 @@ useEffect(() => {
       setNewGroupName("");
       setNewGroupDesc("");
       setNewGroupCode("");
+      setNewGroupPublic(false);
+      setNewGroupTags("");
       setActiveGroupId(data.id);
     } catch (err) {
       setGroupCodeError(err.message);
@@ -5371,6 +5451,98 @@ useEffect(() => {
     if (activeGroupId === id) setActiveGroupId(null);
   };
 
+  const persistPendingJoinRequests = async (next) => {
+    setPendingJoinRequests(next);
+    try { await window.storage.set(COMMUNITY_JOIN_REQUESTS_KEY, JSON.stringify(next), false); } catch (err) {}
+  };
+
+  const loadDiscoverGroups = async () => {
+    setDiscoverLoaded(false);
+    try {
+      const q = discoverSearch.trim();
+      const data = await communityApi(`/groups/discover${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+      setDiscoverGroups(data.groups || []);
+    } catch (err) {
+      setCommunityApiError(err.message);
+    } finally {
+      setDiscoverLoaded(true);
+    }
+  };
+
+  const requestToJoinGroup = async (group) => {
+    try {
+      await communityApi(`/groups/${group.id}/request-join`, {
+        method: "POST",
+        body: JSON.stringify({ username: communityUsername }),
+      });
+      await persistPendingJoinRequests([...pendingJoinRequests, { id: group.id, name: group.name, ts: Date.now() }]);
+    } catch (err) {
+      setCommunityApiError(err.message);
+    }
+  };
+
+  const checkJoinRequestStatus = async (req) => {
+    try {
+      const data = await communityApi(`/groups/${req.id}/request-status?username=${encodeURIComponent(communityUsername)}`);
+      if (data.approved && data.token) {
+        const membership = { id: req.id, token: data.token, name: data.name || req.name, description: data.description, role: "member" };
+        await persistMyGroups([...myGroups, membership]);
+        await persistPendingJoinRequests(pendingJoinRequests.filter((r) => r.id !== req.id));
+        setActiveGroupId(req.id);
+      } else if (data.declined) {
+        await persistPendingJoinRequests(pendingJoinRequests.filter((r) => r.id !== req.id));
+        setCommunityApiError(`Your request to join ${req.name} was declined.`);
+      } else {
+        setCommunityApiError("Still pending \u2014 no response yet.");
+      }
+    } catch (err) {
+      setCommunityApiError(err.message);
+    }
+  };
+
+  const loadGroupJoinRequests = async () => {
+    const membership = myGroups.find((g) => g.id === activeGroupId);
+    if (!membership) return;
+    setGroupJoinRequestsLoaded(false);
+    try {
+      const data = await communityApi(`/groups/${activeGroupId}/requests`, {
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      setGroupJoinRequests(data.requests || []);
+    } catch (err) {
+      setManageMsg(err.message);
+    } finally {
+      setGroupJoinRequestsLoaded(true);
+    }
+  };
+
+  const approveJoinRequest = async (username) => {
+    const membership = myGroups.find((g) => g.id === activeGroupId);
+    if (!membership) return;
+    try {
+      await communityApi(`/groups/${activeGroupId}/requests/${encodeURIComponent(username)}/approve`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      setGroupJoinRequests((cur) => cur.filter((r) => r.username !== username));
+      setManageMsg(`${username} approved.`);
+    } catch (err) {
+      setManageMsg(err.message);
+    }
+  };
+
+  const declineJoinRequest = async (username) => {
+    const membership = myGroups.find((g) => g.id === activeGroupId);
+    if (!membership) return;
+    try {
+      await communityApi(`/groups/${activeGroupId}/requests/${encodeURIComponent(username)}/decline`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      setGroupJoinRequests((cur) => cur.filter((r) => r.username !== username));
+    } catch (err) {}
+  };
+
   const sendCommunityMessage = async () => {
     if (!activeGroupId) return;
     const membership = myGroups.find((g) => g.id === activeGroupId);
@@ -5393,6 +5565,7 @@ if (!isSignal && !communityMsgText.trim()) return;
           author: communityUsername || "Anonymous",
           type: isSignal ? "signal" : "chat",
           text: communityMsgText.trim(),
+          replyTo: !isSignal ? replyingTo?.id || undefined : undefined,
           pair: isSignal ? signalPair.trim().toUpperCase() : undefined,
           direction: isSignal ? signalDirection : undefined,
           entry: isSignal ? signalEntry.trim() : undefined,
@@ -5405,6 +5578,7 @@ if (!isSignal && !communityMsgText.trim()) return;
       setSignalEntry("");
       setSignalSL("");
       setSignalTP("");
+      setReplyingTo(null);
       const data = await communityApi(`/groups/${activeGroupId}/messages`, {
         headers: { Authorization: `Bearer ${membership.token}` },
       });
@@ -5413,7 +5587,6 @@ if (!isSignal && !communityMsgText.trim()) return;
       setCommunityApiError(err.message);
     }
   };
-
 
   const defaultBalanceInputRef = useRef(null);
   const defaultBalanceDebounceRef = useRef(null);
@@ -14249,7 +14422,7 @@ if (activeTab === "community") {
   const myMember = groupMembersList.find((m) => m.username === communityUsername);
   const isGroupOwner = group?.role === "owner" || !!myMember?.isOwner;
   const isGroupAdmin = !!myMember?.isAdmin;
-  const canPostSignal = isGroupOwner || isGroupAdmin; // change #3
+  const canPostSignal = isGroupOwner || isGroupAdmin || !!myMember?.isSignalProvider;
   const chatMessages = groupMessages.filter((m) => m.type !== "signal");
   const signalMessages = groupMessages.filter((m) => m.type === "signal");
     return (
@@ -14655,10 +14828,34 @@ if (activeTab === "community") {
                           borderTopLeftRadius: !isMe && grouped ? "6px" : "16px",
                         }}
                       >
+                        {m.replyToAuthor && (
+                          <div
+                            className="rounded-lg px-2.5 py-1.5 mb-1.5"
+                            style={{ background: isMe ? "rgba(0,0,0,0.12)" : palette.field, borderLeft: `2px solid ${palette.gold}` }}
+                          >
+                            <div style={{ fontSize: "10px", fontWeight: 700, color: isMe ? palette.letterbox : palette.gold, opacity: 0.9 }}>
+                              {m.replyToAuthor}
+                            </div>
+                            <div className="truncate" style={{ fontSize: "11px", opacity: 0.8 }}>{m.replyToText}</div>
+                          </div>
+                        )}
                         {m.text}
                       </div>
-                      <div style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono, marginTop: "3px", textAlign: isMe ? "right" : "left" }}>
-                        {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <div
+                        className="flex items-center gap-2"
+                        style={{ marginTop: "3px", justifyContent: isMe ? "flex-end" : "flex-start" }}
+                      >
+                        <span style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono }}>
+                          {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setReplyingTo({ id: m.id, author: m.author, preview: (m.text || "").slice(0, 60) })}
+                          className={TAP}
+                          style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono }}
+                        >
+                          Reply
+                        </button>
                       </div>
                       {group?.role === "owner" && (
                         <button
@@ -14709,6 +14906,20 @@ if (activeTab === "community") {
             padding: isDesktop ? "12px 16px 16px" : "8px 12px 12px",
           }}
         >
+          {replyingTo && (
+            <div
+              className="flex items-center justify-between rounded-lg px-3 py-2 mb-2"
+              style={{ background: palette.field, border: `1px solid ${palette.gold}55` }}
+            >
+              <div className="min-w-0">
+                <div style={{ color: palette.gold, fontSize: "10.5px", fontWeight: 700 }}>Replying to {replyingTo.author}</div>
+                <div className="truncate" style={{ color: palette.textMuted, fontSize: "11px" }}>{replyingTo.preview}</div>
+              </div>
+              <button type="button" onClick={() => setReplyingTo(null)} className={TAP} style={{ color: palette.textFaint, flexShrink: 0 }}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <div
             className="flex items-center gap-2 rounded-2xl"
             style={{ background: palette.field, border: `1px solid ${palette.border}`, padding: "4px 4px 4px 16px" }}
@@ -14842,8 +15053,34 @@ const renderSidebar = () => (
               type="text" value={newGroupCode}
               onChange={(e) => { setNewGroupCode(e.target.value); if (groupCodeError) setGroupCodeError(""); }}
               placeholder="Entry code (4+ chars)" maxLength={40}
-              className="w-full rounded-lg px-2.5 py-2 mb-1 bg-transparent outline-none"
+              className="w-full rounded-lg px-2.5 py-2 mb-1.5 bg-transparent outline-none"
               style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12.5px" }}
+            />
+            <div className="flex gap-1.5 mb-1.5">
+              {[{ v: false, label: "Private" }, { v: true, label: "Public" }].map((opt) => (
+                <button
+                  key={String(opt.v)}
+                  type="button"
+                  onClick={() => setNewGroupPublic(opt.v)}
+                  className={`flex-1 rounded-lg py-1.5 ${TAP}`}
+                  style={{
+                    background: newGroupPublic === opt.v ? palette.gold : palette.surface,
+                    color: newGroupPublic === opt.v ? palette.letterbox : palette.textMuted,
+                    border: `1px solid ${newGroupPublic === opt.v ? palette.gold : palette.border}`,
+                    fontFamily: mono, fontSize: "11px", fontWeight: 700,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={newGroupTags}
+              onChange={(e) => setNewGroupTags(e.target.value)}
+              placeholder="Tags, comma separated"
+              className="w-full rounded-lg px-2.5 py-2 mb-1 bg-transparent outline-none"
+              style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "11.5px" }}
             />
             {groupCodeError && <p className="text-xs mb-1.5" style={{ color: palette.red }}>{groupCodeError}</p>}
             <div className="flex gap-1.5">
@@ -15025,6 +15262,113 @@ const renderSidebar = () => (
           </div>
         </div>
 
+        <div className="flex gap-2 mb-4">
+          {[{ id: "mine", label: "My Groups" }, { id: "discover", label: "Discover" }].map((t) => {
+            const active = communityLobbyTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setCommunityLobbyTab(t.id); if (t.id === "discover" && !discoverLoaded) loadDiscoverGroups(); }}
+                className={`flex-1 px-3 py-2 rounded-full transition-colors ${TAP}`}
+                style={{
+                  background: active ? palette.gold : palette.field,
+                  color: active ? palette.letterbox : palette.textMuted,
+                  border: `1px solid ${active ? palette.gold : palette.border}`,
+                  fontFamily: mono, fontSize: "12.5px", fontWeight: 700,
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {communityLobbyTab === "discover" ? (
+          <>
+            <div className="flex items-center rounded-lg px-3 mb-4" style={{ background: palette.field, border: `1px solid ${palette.border}` }}>
+              <Search size={14} style={{ color: palette.textFaint, flexShrink: 0 }} />
+              <input
+                type="text"
+                value={discoverSearch}
+                onChange={(e) => setDiscoverSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") loadDiscoverGroups(); }}
+                placeholder="Search public groups or tags"
+                className="w-full bg-transparent py-3 px-2 outline-none"
+                style={{ color: palette.text, fontSize: "14px" }}
+              />
+              <button type="button" onClick={loadDiscoverGroups} className={TAP} style={{ color: palette.gold, fontSize: "11px", fontFamily: mono }}>
+                Search
+              </button>
+            </div>
+
+            {pendingJoinRequestsLoaded && pendingJoinRequests.length > 0 && (
+              <>
+                <span className="block mb-2 uppercase" style={{ color: palette.textFaint, letterSpacing: "0.08em", fontSize: "10.5px", fontWeight: 700 }}>
+                  Your Pending Requests
+                </span>
+                {pendingJoinRequests.map((req) => (
+                  <div key={req.id} className="flex items-center justify-between rounded-xl px-3.5 py-2.5 mb-2"
+                    style={{ background: palette.surface, border: `1px solid ${palette.border}` }}>
+                    <span style={{ color: palette.text, fontSize: "13px" }}>{req.name}</span>
+                    <button type="button" onClick={() => checkJoinRequestStatus(req)} className={`px-3 py-1.5 rounded-lg ${TAP}`}
+                      style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.gold, fontFamily: mono, fontSize: "11px", fontWeight: 700 }}>
+                      Check Status
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {!discoverLoaded ? (
+              <p className="text-xs" style={{ color: palette.textFaint }}>Loading public groups\u2026</p>
+            ) : discoverGroups.length === 0 ? (
+              <p className="text-xs" style={{ color: palette.textFaint }}>No public groups found.</p>
+            ) : (
+              discoverGroups.map((g) => {
+                const alreadyIn = myGroups.some((m) => m.id === g.id);
+                const requested = pendingJoinRequests.some((r) => r.id === g.id);
+                return (
+                  <div key={g.id} className="rounded-2xl px-4 py-3.5 mb-2.5" style={{ background: palette.surface, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}>
+                    <div className="flex items-center gap-3">
+                      <Avatar name={g.name} size={40} />
+                      <div className="flex-1 min-w-0">
+                        <div style={{ color: palette.text, fontSize: "14px", fontWeight: 600 }} className="truncate">{g.name}</div>
+                        <div style={{ color: palette.textFaint, fontSize: "11px" }} className="truncate">
+                          {g.description || "Public trading group"} {g.memberCount != null && `\u00b7 ${g.memberCount} members`}
+                        </div>
+                        {Array.isArray(g.tags) && g.tags.length > 0 && (
+                          <div className="flex gap-1 flex-wrap mt-1">
+                            {g.tags.map((tag) => (
+                              <span key={tag} style={{ fontSize: "9.5px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}55`, borderRadius: "999px", padding: "1px 6px" }}>
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => requestToJoinGroup(g)}
+                        disabled={alreadyIn || requested}
+                        className={`px-3 py-1.5 rounded-lg flex-shrink-0 ${TAP}`}
+                        style={{
+                          background: alreadyIn || requested ? palette.field : palette.gold,
+                          color: alreadyIn || requested ? palette.textFaint : palette.letterbox,
+                          border: `1px solid ${alreadyIn || requested ? palette.border : palette.gold}`,
+                          fontFamily: mono, fontSize: "11px", fontWeight: 700,
+                        }}
+                      >
+                        {alreadyIn ? "Joined" : requested ? "Requested" : "Request"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </>
+        ) : (
+        <>
         {!addingGroup ? (
           <div className="flex gap-2 mb-5">
             <button
@@ -15077,12 +15421,40 @@ const renderSidebar = () => (
               onChange={(e) => { setNewGroupCode(e.target.value); if (groupCodeError) setGroupCodeError(""); }}
               placeholder="Entry code (4+ characters)"
               maxLength={40}
-              className="w-full rounded-xl px-3.5 py-2.5 mb-1 bg-transparent outline-none"
+              className="w-full rounded-xl px-3.5 py-2.5 mb-2 bg-transparent outline-none"
               style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "14px" }}
+            />
+            <div className="flex gap-2 mb-2">
+              {[{ v: false, label: "Private" }, { v: true, label: "Public" }].map((opt) => (
+                <button
+                  key={String(opt.v)}
+                  type="button"
+                  onClick={() => setNewGroupPublic(opt.v)}
+                  className={`flex-1 rounded-xl py-2 ${TAP}`}
+                  style={{
+                    background: newGroupPublic === opt.v ? palette.gold : palette.field,
+                    color: newGroupPublic === opt.v ? palette.letterbox : palette.textMuted,
+                    border: `1px solid ${newGroupPublic === opt.v ? palette.gold : palette.border}`,
+                    fontFamily: mono, fontSize: "12px", fontWeight: 700,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={newGroupTags}
+              onChange={(e) => setNewGroupTags(e.target.value)}
+              placeholder="Tags, comma separated (e.g. gold, scalping)"
+              className="w-full rounded-xl px-3.5 py-2.5 mb-1 bg-transparent outline-none"
+              style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "13px" }}
             />
             {groupCodeError && <p className="text-xs mb-2" style={{ color: palette.red }}>{groupCodeError}</p>}
             <p className="text-xs mb-3" style={{ color: palette.textFaint }}>
-              Not listed anywhere — share this code directly with who you want to invite.
+              {newGroupPublic
+                ? "Public groups appear in Discover — anyone can find and request to join. You still approve each request."
+                : "Not listed anywhere — share this code directly with who you want to invite."}
             </p>
             <div className="flex gap-2">
               <button
@@ -15179,6 +15551,8 @@ const renderSidebar = () => (
           </div>
           {joinCodeError && <p className="text-xs mt-2" style={{ color: palette.red }}>{joinCodeError}</p>}
         </div>
+        </>
+        )}
       </>
     );
   } else {
@@ -15186,8 +15560,6 @@ const renderSidebar = () => (
     body = renderChatPanel({ height: "100%" });
   }
 }
-
-
 
   return (
     <div
@@ -17230,7 +17602,7 @@ const membership = myGroups.find((g) => g.id === activeGroupId);
 const myMember = groupMembersList.find((m) => m.username === communityUsername);
 const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
   const authors = Array.from(new Set(groupMessages.map((m) => m.author))).filter(Boolean);
-  const tabs = ["members", ...(isOwner ? ["settings", "danger"] : [])];
+  const tabs = ["members", ...(isOwner ? ["requests", "settings", "danger"] : [])];
 
   return (
     <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -17248,7 +17620,7 @@ const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
               {isOwner ? "★ You own this group" : "Member"}
             </div>
           </div>
-          <button type="button" onClick={() => setGroupManageOpen(false)} className={TAP} style={{ color: palette.textFaint }}>
+          <button type="button" onClick={() => { setGroupManageOpen(false); setOpenRoleMenuFor(null); }} className={TAP} style={{ color: palette.textFaint }}>
             <X size={18} />
           </button>
         </div>
@@ -17257,7 +17629,7 @@ const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
           {tabs.map((t) => {
             const active = groupManageTab === t;
             return (
-              <button key={t} type="button" onClick={() => setGroupManageTab(t)}
+              <button key={t} type="button" onClick={() => { setGroupManageTab(t); if (t === "requests") loadGroupJoinRequests(); }}
                 className={`px-3 py-1.5 rounded-full ${TAP}`}
                 style={{
                   background: active ? (t === "danger" ? palette.red : palette.gold) : palette.field,
@@ -17283,11 +17655,12 @@ const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
                 <>
 {groupMembersList.map((mem) => {
   const memberIsAdmin = !!mem.isAdmin;
+  const memberIsSignal = !!mem.isSignalProvider;
   return (
-    <div key={mem.username} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
+    <div key={mem.username} className="relative flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
       style={{
         background: palette.field,
-        border: `1px solid ${mem.isOwner ? palette.gold + "55" : memberIsAdmin ? palette.green + "55" : palette.border}`,
+        border: `1px solid ${mem.isOwner ? palette.gold + "55" : (memberIsAdmin || memberIsSignal) ? palette.green + "55" : palette.border}`,
       }}>
       <div className="flex items-center gap-2">
         <Avatar name={mem.username} size={26} />
@@ -17301,29 +17674,98 @@ const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        {mem.isOwner ? (
+        {mem.isOwner && (
           <span style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
             Owner
           </span>
-        ) : memberIsAdmin ? (
+        )}
+        {!mem.isOwner && memberIsAdmin && (
           <span style={{ fontSize: "9px", fontFamily: mono, color: palette.green, border: `1px solid ${palette.green}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
             Admin
           </span>
-        ) : null}
+        )}
+        {!mem.isOwner && memberIsSignal && (
+          <span style={{ fontSize: "9px", fontFamily: mono, color: palette.goldBright, border: `1px solid ${palette.goldBright}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
+            Signal
+          </span>
+        )}
+
         {isOwner && !mem.isOwner && (
-          <>
+          <div className="relative flex-shrink-0">
             <button
               type="button"
-              onClick={() => (memberIsAdmin ? demoteAdmin(mem.username) : promoteToAdmin(mem.username))}
-              className={TAP}
-              style={{ color: palette.gold, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}
+              onClick={() => setOpenRoleMenuFor(openRoleMenuFor === mem.username ? null : mem.username)}
+              className={`flex items-center justify-center rounded-lg ${TAP}`}
+              style={{
+                width: "24px",
+                height: "24px",
+                background: openRoleMenuFor === mem.username ? palette.gold : palette.field,
+                border: `1px solid ${openRoleMenuFor === mem.username ? palette.gold : palette.border}`,
+                color: openRoleMenuFor === mem.username ? palette.letterbox : palette.textMuted,
+              }}
+              aria-label={`Manage role for ${mem.username}`}
             >
-              {memberIsAdmin ? "Remove Admin" : "Make Admin"}
+              <ChevronDown
+                size={13}
+                style={{
+                  transform: openRoleMenuFor === mem.username ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s ease",
+                }}
+              />
             </button>
-            <button type="button" onClick={() => setPendingKick(mem.username)} className={TAP} style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
-              Remove
-            </button>
-          </>
+
+            {openRoleMenuFor === mem.username && (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{
+                  position: "absolute",
+                  top: "28px",
+                  right: 0,
+                  zIndex: 5,
+                  width: "170px",
+                  background: palette.surface,
+                  border: `1px solid ${palette.border}`,
+                  boxShadow: palette.shadow,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    memberIsAdmin ? demoteAdmin(mem.username) : promoteToAdmin(mem.username);
+                    setOpenRoleMenuFor(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-left ${TAP}`}
+                  style={{ borderBottom: `1px solid ${palette.border}` }}
+                >
+                  <span style={{ color: palette.text, fontSize: "12px" }}>Admin</span>
+                  {memberIsAdmin && <Check size={13} style={{ color: palette.green }} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    memberIsSignal ? demoteSignalProvider(mem.username) : promoteToSignalProvider(mem.username);
+                    setOpenRoleMenuFor(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-left ${TAP}`}
+                  style={{ borderBottom: `1px solid ${palette.border}` }}
+                >
+                  <span style={{ color: palette.text, fontSize: "12px" }}>Signal Provider</span>
+                  {memberIsSignal && <Check size={13} style={{ color: palette.goldBright }} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenRoleMenuFor(null);
+                    setPendingKick(mem.username);
+                  }}
+                  className={`w-full flex items-center gap-1.5 px-3 py-2.5 text-left ${TAP}`}
+                >
+                  <Trash2 size={12} style={{ color: palette.red }} />
+                  <span style={{ color: palette.red, fontSize: "12px" }}>Remove from Group</span>
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -17338,6 +17780,31 @@ const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
                     </p>
                   )}
                 </>
+              )}
+            </>
+          ) : groupManageTab === "requests" ? (
+            <>
+              {!groupJoinRequestsLoaded ? (
+                <p className="text-xs" style={{ color: palette.textFaint }}>Loading requests\u2026</p>
+              ) : groupJoinRequests.length === 0 ? (
+                <p className="text-xs" style={{ color: palette.textFaint }}>No pending join requests.</p>
+              ) : (
+                groupJoinRequests.map((r) => (
+                  <div key={r.username} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2" style={{ background: palette.field, border: `1px solid ${palette.border}` }}>
+                    <div className="flex items-center gap-2">
+                      <Avatar name={r.username} size={26} />
+                      <span style={{ color: palette.text, fontSize: "13px" }}>{r.username}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => approveJoinRequest(r.username)} className={TAP} style={{ color: palette.green, fontSize: "11px", fontFamily: mono, fontWeight: 700 }}>
+                        Approve
+                      </button>
+                      <button type="button" onClick={() => declineJoinRequest(r.username)} className={TAP} style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 700 }}>
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))
               )}
             </>
           ) : groupManageTab === "settings" ? (
