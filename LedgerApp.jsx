@@ -620,6 +620,72 @@ function StatChip({ label, value, onClick, isDesktop }) {
   );
 }
 
+
+const AVATAR_HUES = [
+  { bg: `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`, fg: palette.letterbox },
+  { bg: `linear-gradient(135deg, ${palette.green}, #3FA97C)`, fg: "#08150F" },
+  { bg: `linear-gradient(135deg, ${palette.red}, #C85A50)`, fg: "#1A0806" },
+  { bg: `linear-gradient(135deg, #7EA6E0, #4E7BC4)`, fg: "#08131F" },
+  { bg: `linear-gradient(135deg, #C792E4, #9A5DC2)`, fg: "#170A1F" },
+];
+
+const getInitials = (name) =>
+  (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
+
+const avatarStyleFor = (seed) => {
+  let h = 0;
+  for (let i = 0; i < (seed || "").length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_HUES[h % AVATAR_HUES.length];
+};
+
+function Avatar({ name, size = 40, ring, online, src }) {
+  const a = avatarStyleFor(name || "?");
+  return (
+    <span className="relative inline-flex flex-shrink-0" style={{ width: `${size}px`, height: `${size}px` }}>
+      {src ? (
+        <img
+          src={src}
+          alt={name || "avatar"}
+          className="rounded-full w-full h-full"
+          style={{
+            objectFit: "cover",
+            boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
+          }}
+        />
+      ) : (
+        <span
+          className="flex items-center justify-center rounded-full w-full h-full"
+          style={{
+            background: a.bg,
+            color: a.fg,
+            fontFamily: mono,
+            fontWeight: 800,
+            fontSize: `${Math.round(size * 0.38)}px`,
+            boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
+          }}
+        >
+          {getInitials(name)}
+        </span>
+      )}
+      {online && (
+        <span
+          style={{
+            position: "absolute",
+            bottom: "-1px",
+            right: "-1px",
+            width: `${Math.max(9, size * 0.26)}px`,
+            height: `${Math.max(9, size * 0.26)}px`,
+            borderRadius: "999px",
+            background: palette.green,
+            border: `2px solid ${palette.surface}`,
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+
 function PillGroup({ options, value, onChange, suffix = "%" }) {
   return (
     <div className="flex gap-2 flex-wrap mb-4">
@@ -14136,70 +14202,7 @@ const closestWeekday = [...mistakePatterns.weekdayRows].sort(
 
 
 if (activeTab === "community") {
-  const getInitials = (name) =>
-    (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "?";
-
-  const AVATAR_HUES = [
-    { bg: `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`, fg: palette.letterbox },
-    { bg: `linear-gradient(135deg, ${palette.green}, #3FA97C)`, fg: "#08150F" },
-    { bg: `linear-gradient(135deg, ${palette.red}, #C85A50)`, fg: "#1A0806" },
-    { bg: `linear-gradient(135deg, #7EA6E0, #4E7BC4)`, fg: "#08131F" },
-    { bg: `linear-gradient(135deg, #C792E4, #9A5DC2)`, fg: "#170A1F" },
-  ];
-  const avatarStyleFor = (seed) => {
-    let h = 0;
-    for (let i = 0; i < (seed || "").length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-    return AVATAR_HUES[h % AVATAR_HUES.length];
-  };
-
-  const Avatar = ({ name, size = 40, ring, online, src }) => {
-    const a = avatarStyleFor(name || "?");
-    return (
-      <span className="relative inline-flex flex-shrink-0" style={{ width: `${size}px`, height: `${size}px` }}>
-        {src ? (
-          <img
-            src={src}
-            alt={name || "avatar"}
-            className="rounded-full w-full h-full"
-            style={{
-              objectFit: "cover",
-              boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
-            }}
-          />
-        ) : (
-          <span
-            className="flex items-center justify-center rounded-full w-full h-full"
-            style={{
-              background: a.bg,
-              color: a.fg,
-              fontFamily: mono,
-              fontWeight: 800,
-              fontSize: `${Math.round(size * 0.38)}px`,
-              boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
-            }}
-          >
-            {getInitials(name)}
-          </span>
-        )}
-        {online && (
-          <span
-            style={{
-              position: "absolute",
-              bottom: "-1px",
-              right: "-1px",
-              width: `${Math.max(9, size * 0.26)}px`,
-              height: `${Math.max(9, size * 0.26)}px`,
-              borderRadius: "999px",
-              background: palette.green,
-              border: `2px solid ${palette.surface}`,
-            }}
-          />
-        )}
-      </span>
-    );
-  };
-
-  // ---------- Reusable chat panel (used standalone on mobile, embedded in split view on desktop) ----------
+    // ---------- Reusable chat panel (used standalone on mobile, embedded in split view on desktop) ----------
   const renderChatPanel = (heightStyle) => {
     const group = myGroups.find((g) => g.id === activeGroupId);
     return (
