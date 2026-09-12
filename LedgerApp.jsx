@@ -4249,6 +4249,37 @@ const renameCommunityGroup = async () => {
   }
 };
 
+const promoteToAdmin = async (username) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership || membership.role !== "owner") return; // only the owner can promote
+  try {
+    await communityApi(`/groups/${activeGroupId}/admins`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${membership.token}` },
+      body: JSON.stringify({ member: username }),
+    });
+    setGroupMembersList((cur) => cur.map((m) => (m.username === username ? { ...m, isAdmin: true } : m)));
+    setManageMsg(`${username} is now an admin.`);
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't make them an admin.");
+  }
+};
+
+const demoteAdmin = async (username) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership || membership.role !== "owner") return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/admins/${encodeURIComponent(username)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setGroupMembersList((cur) => cur.map((m) => (m.username === username ? { ...m, isAdmin: false } : m)));
+    setManageMsg(`${username} is no longer an admin.`);
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't remove admin.");
+  }
+};
+
 const kickCommunityMember = async (authorName) => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
   if (!membership) return;
@@ -5340,9 +5371,15 @@ useEffect(() => {
     if (!activeGroupId) return;
     const membership = myGroups.find((g) => g.id === activeGroupId);
     if (!membership) return;
-    const isSignal = communityMsgMode === "signal";
-    if (isSignal && !signalPair.trim()) return;
-    if (!isSignal && !communityMsgText.trim()) return;
+const isSignal = communityPanelTab === "signal";
+if (isSignal) {
+  const membershipForCheck = myGroups.find((g) => g.id === activeGroupId);
+  const myMemberForCheck = groupMembersList.find((m) => m.username === communityUsername);
+  const allowed = membershipForCheck?.role === "owner" || !!myMemberForCheck?.isOwner || !!myMemberForCheck?.isAdmin;
+  if (!allowed) return;
+}
+if (isSignal && !signalPair.trim()) return;
+if (!isSignal && !communityMsgText.trim()) return;
 
     try {
       await communityApi(`/groups/${activeGroupId}/messages`, {
@@ -14204,7 +14241,13 @@ const closestWeekday = [...mistakePatterns.weekdayRows].sort(
 if (activeTab === "community") {
     // ---------- Reusable chat panel (used standalone on mobile, embedded in split view on desktop) ----------
   const renderChatPanel = (heightStyle) => {
-    const group = myGroups.find((g) => g.id === activeGroupId);
+  const group = myGroups.find((g) => g.id === activeGroupId);
+  const myMember = groupMembersList.find((m) => m.username === communityUsername);
+  const isGroupOwner = group?.role === "owner" || !!myMember?.isOwner;
+  const isGroupAdmin = !!myMember?.isAdmin;
+  const canPostSignal = isGroupOwner || isGroupAdmin; // change #3
+  const chatMessages = groupMessages.filter((m) => m.type !== "signal");
+  const signalMessages = groupMessages.filter((m) => m.type === "signal");
     return (
       <div className="flex flex-col h-full" style={heightStyle}>
         {/* Header */}
@@ -14282,8 +14325,8 @@ if (activeTab === "community") {
           );
         })()}
 
-        <div className="flex gap-2 px-4 pt-3 pb-1 flex-shrink-0">
-          {[{ id: "chat", label: "Chat" }, { id: "posts", label: "Announcements" }].map((t) => {
+<div className="flex gap-2 px-4 pt-3 pb-1 flex-shrink-0">
+  {[{ id: "chat", label: "Chat" }, { id: "signal", label: "Signal" }, { id: "posts", label: "Announcements" }].map((t) => {
             const active = communityPanelTab === t.id;
             return (
               <button
@@ -14389,8 +14432,142 @@ if (activeTab === "community") {
               )}
             </div>
           </>
+
+         ) : communityPanelTab === "signal" ? (
+  <>
+    <div className="flex-1 px-4 py-4" style={{ background: `radial-gradient(ellipse 800px 400px at 50% 0%, ${palette.gold}08, transparent), ${palette.bg}`, overflowY: "auto", minHeight: 0 }}>
+      {!groupMessagesLoaded ? (
+        <p className="text-xs" style={{ color: palette.textFaint }}>Loading signals…</p>
+      ) : signalMessages.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full text-center py-8">
+          <span className="flex items-center justify-center rounded-full mb-3" style={{ width: "52px", height: "52px", background: `${palette.gold}14`, border: `1px solid ${palette.gold}33` }}>
+            <TrendingUp size={22} style={{ color: palette.gold }} />
+          </span>
+          <p style={{ color: palette.text, fontSize: "14px", fontWeight: 600, marginBottom: "3px" }}>No signals yet</p>
+          <p className="text-xs" style={{ color: palette.textFaint, maxWidth: "260px" }}>
+            {canPostSignal ? "Post the first trade signal below." : "Only the owner and admins can post signals here."}
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {signalMessages.map((m) => {
+            const isMe = m.author === communityUsername;
+            const canDelete = isMe || isGroupOwner;
+            return (
+              <div key={m.id} className="flex" style={{ justifyContent: isMe ? "flex-end" : "flex-start", gap: "8px" }}>
+                {!isMe && <Avatar name={m.author} size={28} />}
+                <div style={{ maxWidth: isDesktop ? "62%" : "78%" }}>
+                  {!isMe && (
+                    <div style={{ color: palette.gold, fontSize: "11.5px", fontWeight: 700, marginBottom: "3px", marginLeft: "3px" }}>
+                      {m.author}
+                    </div>
+                  )}
+                  <div className="rounded-2xl p-3.5" style={{ background: palette.surface, border: `1px solid ${m.direction === "sell" ? palette.red : palette.green}55`, borderTop: `3px solid ${m.direction === "sell" ? palette.red : palette.green}`, boxShadow: palette.shadow }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span style={{ fontSize: "9.5px", fontFamily: mono, fontWeight: 800, color: m.direction === "sell" ? palette.red : palette.green, background: `${m.direction === "sell" ? palette.red : palette.green}1E`, borderRadius: "999px", padding: "2px 9px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                        {m.direction === "sell" ? "↓ Sell" : "↑ Buy"}
+                      </span>
+                      <span style={{ fontFamily: mono, fontSize: "14px", color: palette.text, fontWeight: 800 }}>{m.pair}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[["Entry", m.entry], ["SL", m.sl], ["TP", m.tp]].map(([lbl, val]) => (
+                        <div key={lbl} style={{ background: palette.field, borderRadius: "8px", padding: "5px 6px", textAlign: "center", border: `1px solid ${palette.border}` }}>
+                          <div style={{ fontSize: "8.5px", color: palette.textFaint, textTransform: "uppercase", letterSpacing: "0.04em" }}>{lbl}</div>
+                          <div style={{ fontFamily: mono, fontSize: "12px", color: palette.text, fontWeight: 700 }}>{val || "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {m.text && <div style={{ color: palette.textMuted, fontSize: "12.5px", marginTop: "8px", lineHeight: 1.4 }}>{m.text}</div>}
+                  </div>
+                  <div className="flex items-center gap-3" style={{ justifyContent: isMe ? "flex-end" : "flex-start", marginTop: "3px" }}>
+                    <span style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono }}>
+                      {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    {isGroupOwner && (
+                      <button type="button" onClick={() => pinCommunityMessage(pinnedMessageId === m.id ? null : m.id)} className={TAP} style={{ color: pinnedMessageId === m.id ? palette.gold : palette.textFaint, fontSize: "9.5px", fontFamily: mono }}>
+                        {pinnedMessageId === m.id ? "Unpin" : "Pin"}
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button type="button" onClick={() => setPendingDeleteMsg(m.id)} className={TAP} style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono }}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={communityMessagesEndRef} />
+        </div>
+      )}
+    </div>
+
+    <div className="flex-shrink-0" style={{ borderTop: `1px solid ${palette.border}`, background: palette.surface, padding: isDesktop ? "12px 16px 16px" : "8px 12px 12px" }}>
+      {canPostSignal ? (
+        <>
+          <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: palette.field, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <input type="text" value={signalPair} onChange={(e) => setSignalPair(e.target.value.toUpperCase())} placeholder="Pair (XAUUSD)"
+                className="rounded-xl px-3 py-2 bg-transparent outline-none"
+                style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12.5px" }} />
+              <div className="flex gap-1">
+                {["buy", "sell"].map((d) => (
+                  <button key={d} type="button" onClick={() => setSignalDirection(d)} className={`flex-1 rounded-xl py-2 ${TAP}`}
+                    style={{
+                      background: signalDirection === d ? (d === "sell" ? palette.red : palette.green) : palette.surface,
+                      color: signalDirection === d ? "#FFFFFF" : palette.textMuted,
+                      border: `1px solid ${signalDirection === d ? "transparent" : palette.border}`,
+                      fontFamily: mono, fontSize: "11.5px", textTransform: "uppercase", fontWeight: 700,
+                    }}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <input type="text" value={signalEntry} onChange={(e) => setSignalEntry(e.target.value)} placeholder="Entry"
+                className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
+                style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
+              <input type="text" value={signalSL} onChange={(e) => setSignalSL(e.target.value)} placeholder="SL"
+                className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
+                style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
+              <input type="text" value={signalTP} onChange={(e) => setSignalTP(e.target.value)} placeholder="TP"
+                className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
+                style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-2xl" style={{ background: palette.field, border: `1px solid ${palette.border}`, padding: "4px 4px 4px 16px" }}>
+            <input type="text" value={communityMsgText} onChange={(e) => setCommunityMsgText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendCommunityMessage(); } }}
+              placeholder="Add a note (optional)"
+              className={isDesktop ? "flex-1 bg-transparent py-3 outline-none" : "flex-1 bg-transparent py-3.5 outline-none"}
+              style={{ color: palette.text, fontSize: isDesktop ? "14px" : "15px" }} />
+            <button type="button" onClick={sendCommunityMessage} disabled={!signalPair.trim()}
+              className={`flex items-center justify-center rounded-full flex-shrink-0 ${TAP}`}
+              style={{
+                width: isDesktop ? "40px" : "42px", height: isDesktop ? "40px" : "42px",
+                background: `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`,
+                color: palette.letterbox, boxShadow: `0 3px 10px ${palette.gold}44`,
+                opacity: !signalPair.trim() ? 0.5 : 1,
+              }} aria-label="Send signal">
+              <Send size={16} />
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-xs text-center py-2" style={{ color: palette.textFaint }}>
+          Only the owner and admins can post signals in this group.
+        </p>
+      )}
+      {communityApiError && <p className="text-xs mt-2" style={{ color: palette.red }}>{communityApiError}</p>}
+    </div>
+  </>
+
+
         ) : (
           <>
+
 
         {/* Messages */}
         <div
@@ -14403,7 +14580,7 @@ if (activeTab === "community") {
         >
           {!groupMessagesLoaded ? (
             <p className="text-xs" style={{ color: palette.textFaint }}>Loading messages…</p>
-          ) : groupMessages.length === 0 ? (
+          ) : chatMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-8">
               <span
                 className="flex items-center justify-center rounded-full mb-3"
@@ -14413,14 +14590,14 @@ if (activeTab === "community") {
               </span>
               <p style={{ color: palette.text, fontSize: "14px", fontWeight: 600, marginBottom: "3px" }}>No messages yet</p>
               <p className="text-xs" style={{ color: palette.textFaint, maxWidth: "260px" }}>
-                Say hello or post the first trade signal to get the conversation going.
+                Say hello to get the conversation going.
               </p>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {groupMessages.map((m, i) => {
+              {chatMessages.map((m, i) => {
                 const isMe = m.author === communityUsername;
-                const prev = groupMessages[i - 1];
+                const prev = chatMessages[i - 1];
                 const grouped = prev && prev.author === m.author && m.ts - prev.ts < 3 * 60 * 1000;
                 const bubbleColor = isMe
                   ? `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`
@@ -14462,57 +14639,20 @@ if (activeTab === "community") {
                           {m.author}
                         </div>
                       )}
-                      {m.type === "signal" ? (
-                        <div
-                          className="rounded-2xl p-3.5"
-                          style={{
-                            background: palette.surface,
-                            border: `1px solid ${m.direction === "sell" ? palette.red : palette.green}55`,
-                            borderTop: `3px solid ${m.direction === "sell" ? palette.red : palette.green}`,
-                            boxShadow: palette.shadow,
-                          }}
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <span
-                              style={{
-                                fontSize: "9.5px", fontFamily: mono, fontWeight: 800,
-                                color: m.direction === "sell" ? palette.red : palette.green,
-                                background: `${m.direction === "sell" ? palette.red : palette.green}1E`,
-                                borderRadius: "999px", padding: "2px 9px", textTransform: "uppercase", letterSpacing: "0.04em",
-                              }}
-                            >
-                              {m.direction === "sell" ? "↓ Sell" : "↑ Buy"}
-                            </span>
-                            <span style={{ fontFamily: mono, fontSize: "14px", color: palette.text, fontWeight: 800 }}>
-                              {m.pair}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {[["Entry", m.entry], ["SL", m.sl], ["TP", m.tp]].map(([lbl, val]) => (
-                              <div key={lbl} style={{ background: palette.field, borderRadius: "8px", padding: "5px 6px", textAlign: "center", border: `1px solid ${palette.border}` }}>
-                                <div style={{ fontSize: "8.5px", color: palette.textFaint, textTransform: "uppercase", letterSpacing: "0.04em" }}>{lbl}</div>
-                                <div style={{ fontFamily: mono, fontSize: "12px", color: palette.text, fontWeight: 700 }}>{val || "—"}</div>
-                              </div>
-                            ))}
-                          </div>
-                          {m.text && <div style={{ color: palette.textMuted, fontSize: "12.5px", marginTop: "8px", lineHeight: 1.4 }}>{m.text}</div>}
-                        </div>
-                      ) : (
-                        <div
-                          className="rounded-2xl px-4 py-2.5"
-                          style={{
-                            background: bubbleColor,
-                            color: textColor,
-                            fontSize: "14px",
-                            lineHeight: 1.45,
-                            boxShadow: isMe ? `0 3px 10px ${palette.gold}33` : palette.shadow,
-                            borderTopRightRadius: isMe && grouped ? "6px" : "16px",
-                            borderTopLeftRadius: !isMe && grouped ? "6px" : "16px",
-                          }}
-                        >
-                          {m.text}
-                        </div>
-                      )}
+                      <div
+                        className="rounded-2xl px-4 py-2.5"
+                        style={{
+                          background: bubbleColor,
+                          color: textColor,
+                          fontSize: "14px",
+                          lineHeight: 1.45,
+                          boxShadow: isMe ? `0 3px 10px ${palette.gold}33` : palette.shadow,
+                          borderTopRightRadius: isMe && grouped ? "6px" : "16px",
+                          borderTopLeftRadius: !isMe && grouped ? "6px" : "16px",
+                        }}
+                      >
+                        {m.text}
+                      </div>
                       <div style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono, marginTop: "3px", textAlign: isMe ? "right" : "left" }}>
                         {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
@@ -14566,88 +14706,6 @@ if (activeTab === "community") {
           }}
         >
           <div
-            className="flex mb-2 flex-shrink-0"
-            style={{
-              background: palette.field,
-              border: `1px solid ${palette.border}`,
-              borderRadius: "10px",
-              padding: "3px",
-              width: isDesktop ? "auto" : "84px",
-            }}
-          >
-    {[
-      { id: "chat", label: "Message", icon: FileText },
-      { id: "signal", label: "Signal", icon: TrendingUp },
-    ].map((mode) => {
-      const active = communityMsgMode === mode.id;
-      const Icon = mode.icon;
-      return (
-        <button
-          key={mode.id}
-          type="button"
-          onClick={() => setCommunityMsgMode(mode.id)}
-          aria-label={mode.label}
-          className={`flex items-center justify-center gap-1.5 rounded-lg transition-colors ${TAP}`}
-          style={{
-            flex: 1,
-            padding: isDesktop ? "6px 12px" : "6px 0",
-            background: active ? palette.gold : "transparent",
-            color: active ? palette.letterbox : palette.textMuted,
-            fontFamily: mono,
-            fontSize: "11.5px",
-            fontWeight: 700,
-          }}
-        >
-          <Icon size={13} />
-          {isDesktop && mode.label}
-        </button>
-      );
-    })}
-  </div>
-
-          {communityMsgMode === "signal" && (
-            <div
-              className="rounded-2xl p-3.5 mb-2.5"
-              style={{ background: palette.field, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}
-            >
-              <div className="grid grid-cols-2 gap-2 mb-2">
-                <input
-                  type="text" value={signalPair} onChange={(e) => setSignalPair(e.target.value.toUpperCase())} placeholder="Pair (XAUUSD)"
-                  className="rounded-xl px-3 py-2 bg-transparent outline-none"
-                  style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12.5px" }}
-                />
-                <div className="flex gap-1">
-                  {["buy", "sell"].map((d) => (
-                    <button
-                      key={d} type="button" onClick={() => setSignalDirection(d)}
-                      className={`flex-1 rounded-xl py-2 ${TAP}`}
-                      style={{
-                        background: signalDirection === d ? (d === "sell" ? palette.red : palette.green) : palette.surface,
-                        color: signalDirection === d ? "#FFFFFF" : palette.textMuted,
-                        border: `1px solid ${signalDirection === d ? "transparent" : palette.border}`,
-                        fontFamily: mono, fontSize: "11.5px", textTransform: "uppercase", fontWeight: 700,
-                      }}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <input type="text" value={signalEntry} onChange={(e) => setSignalEntry(e.target.value)} placeholder="Entry"
-                  className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
-                  style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
-                <input type="text" value={signalSL} onChange={(e) => setSignalSL(e.target.value)} placeholder="SL"
-                  className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
-                  style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
-                <input type="text" value={signalTP} onChange={(e) => setSignalTP(e.target.value)} placeholder="TP"
-                  className="rounded-xl px-2.5 py-2 bg-transparent outline-none"
-                  style={{ background: palette.surface, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px" }} />
-              </div>
-            </div>
-          )}
-
-          <div
             className="flex items-center gap-2 rounded-2xl"
             style={{ background: palette.field, border: `1px solid ${palette.border}`, padding: "4px 4px 4px 16px" }}
           >
@@ -14656,14 +14714,14 @@ if (activeTab === "community") {
               value={communityMsgText}
               onChange={(e) => setCommunityMsgText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendCommunityMessage(); } }}
-              placeholder={communityMsgMode === "signal" ? "Add a note (optional)" : "Message"}
+              placeholder="Message"
               className={isDesktop ? "flex-1 bg-transparent py-3 outline-none" : "flex-1 bg-transparent py-3.5 outline-none"}
               style={{ color: palette.text, fontSize: isDesktop ? "14px" : "15px" }}
             />
             <button
               type="button"
               onClick={sendCommunityMessage}
-              disabled={communityMsgMode === "signal" ? !signalPair.trim() : !communityMsgText.trim()}
+              disabled={!communityMsgText.trim()}
               className={`flex items-center justify-center rounded-full flex-shrink-0 ${TAP}`}
               style={{
                 width: isDesktop ? "40px" : "42px",
@@ -14671,7 +14729,7 @@ if (activeTab === "community") {
                 background: `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`,
                 color: palette.letterbox,
                 boxShadow: `0 3px 10px ${palette.gold}44`,
-                opacity: (communityMsgMode === "signal" ? !signalPair.trim() : !communityMsgText.trim()) ? 0.5 : 1,
+                opacity: !communityMsgText.trim() ? 0.5 : 1,
               }}
               aria-label="Send"
             >
@@ -17218,31 +17276,54 @@ const renderSidebar = () => (
                 <p className="text-xs" style={{ color: palette.textFaint }}>Loading members…</p>
               ) : (
                 <>
-                  {groupMembersList.map((mem) => (
-                    <div key={mem.username} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
-                      style={{ background: palette.field, border: `1px solid ${mem.isOwner ? palette.gold + "55" : palette.border}` }}>
-                      <div className="flex items-center gap-2">
-                        <Avatar name={mem.username} size={26} />
-                        <div>
-                          <div style={{ color: palette.text, fontSize: "13px", fontWeight: mem.isOwner ? 600 : 400 }}>{mem.username}</div>
-                          <div style={{ color: palette.textFaint, fontSize: "10px", fontFamily: mono }}>
-                            Joined {new Date(mem.joinedAt).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
-                      {mem.isOwner ? (
-                        <span style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
-                          Owner
-                        </span>
-                      ) : (
-                        isOwner && (
-                          <button type="button" onClick={() => setPendingKick(mem.username)} className={TAP} style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
-                            Remove
-                          </button>
-                        )
-                      )}
-                    </div>
-                  ))}
+{groupMembersList.map((mem) => {
+  const memberIsAdmin = !!mem.isAdmin;
+  return (
+    <div key={mem.username} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
+      style={{
+        background: palette.field,
+        border: `1px solid ${mem.isOwner ? palette.gold + "55" : memberIsAdmin ? palette.green + "55" : palette.border}`,
+      }}>
+      <div className="flex items-center gap-2">
+        <Avatar name={mem.username} size={26} />
+        <div>
+          <div style={{ color: palette.text, fontSize: "13px", fontWeight: mem.isOwner || memberIsAdmin ? 600 : 400 }}>
+            {mem.username}
+          </div>
+          <div style={{ color: palette.textFaint, fontSize: "10px", fontFamily: mono }}>
+            Joined {new Date(mem.joinedAt).toLocaleDateString()}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {mem.isOwner ? (
+          <span style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
+            Owner
+          </span>
+        ) : memberIsAdmin ? (
+          <span style={{ fontSize: "9px", fontFamily: mono, color: palette.green, border: `1px solid ${palette.green}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
+            Admin
+          </span>
+        ) : null}
+        {isOwner && !mem.isOwner && (
+          <>
+            <button
+              type="button"
+              onClick={() => (memberIsAdmin ? demoteAdmin(mem.username) : promoteToAdmin(mem.username))}
+              className={TAP}
+              style={{ color: palette.gold, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}
+            >
+              {memberIsAdmin ? "Remove Admin" : "Make Admin"}
+            </button>
+            <button type="button" onClick={() => setPendingKick(mem.username)} className={TAP} style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
+              Remove
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+})}
                   {groupMembersList.length === 0 && (
                     <p className="text-xs" style={{ color: palette.textFaint }}>No members found.</p>
                   )}
