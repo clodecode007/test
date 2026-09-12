@@ -4251,7 +4251,9 @@ const renameCommunityGroup = async () => {
 
 const promoteToAdmin = async (username) => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
-  if (!membership || membership.role !== "owner") return; // only the owner can promote
+  const myMember = groupMembersList.find((m) => m.username === communityUsername);
+  const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
+  if (!membership || !isOwner) return;
   try {
     await communityApi(`/groups/${activeGroupId}/admins`, {
       method: "POST",
@@ -4267,7 +4269,9 @@ const promoteToAdmin = async (username) => {
 
 const demoteAdmin = async (username) => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
-  if (!membership || membership.role !== "owner") return;
+  const myMember = groupMembersList.find((m) => m.username === communityUsername);
+  const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
+  if (!membership || !isOwner) return;
   try {
     await communityApi(`/groups/${activeGroupId}/admins/${encodeURIComponent(username)}`, {
       method: "DELETE",
@@ -17222,8 +17226,9 @@ const renderSidebar = () => (
 
 
 {groupManageOpen && (() => {
-  const membership = myGroups.find((g) => g.id === activeGroupId);
-  const isOwner = membership?.role === "owner";
+const membership = myGroups.find((g) => g.id === activeGroupId);
+const myMember = groupMembersList.find((m) => m.username === communityUsername);
+const isOwner = membership?.role === "owner" || !!myMember?.isOwner;
   const authors = Array.from(new Set(groupMessages.map((m) => m.author))).filter(Boolean);
   const tabs = ["members", ...(isOwner ? ["settings", "danger"] : [])];
 
