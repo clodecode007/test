@@ -4147,6 +4147,10 @@ const [manageNameDraft, setManageNameDraft] = useState("");
 const [manageDescDraft, setManageDescDraft] = useState("");
 const [manageMsg, setManageMsg] = useState("");
 const [pendingKick, setPendingKick] = useState(null);
+const [pendingDeleteMsg, setPendingDeleteMsg] = useState(null);
+const [pendingDeleteGroup, setPendingDeleteGroup] = useState(false);
+const [regeneratingCode, setRegeneratingCode] = useState(false);
+const [newInviteCode, setNewInviteCode] = useState("");
 
 const renameCommunityGroup = async () => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
@@ -4180,6 +4184,57 @@ const kickCommunityMember = async (authorName) => {
     setManageMsg(err.message || "Couldn't remove them.");
   }
   setPendingKick(null);
+};
+
+
+const deleteCommunityMessage = async (messageId) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/messages/${messageId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setGroupMessages((cur) => cur.filter((m) => m.id !== messageId));
+  } catch (err) {
+    setCommunityApiError(err.message || "Couldn't delete that message.");
+  }
+  setPendingDeleteMsg(null);
+};
+
+const regenerateGroupCode = async () => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  setRegeneratingCode(true);
+  try {
+    const data = await communityApi(`/groups/${activeGroupId}/regenerate-code`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setNewInviteCode(data.code || "");
+    setManageMsg("New invite code generated.");
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't regenerate the code.");
+  } finally {
+    setRegeneratingCode(false);
+  }
+};
+
+const deleteCommunityGroupPermanently = async () => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+  } catch (err) {
+    // even if the backend call fails, remove it locally so the owner isn't stuck
+  }
+  await persistMyGroups(myGroups.filter((g) => g.id !== activeGroupId));
+  setActiveGroupId(null);
+  setPendingDeleteGroup(false);
+  setGroupManageOpen(false);
 };
 
 
@@ -14051,12 +14106,31 @@ if (activeTab === "community") {
                   ? `linear-gradient(135deg, ${palette.gold}, ${palette.goldBright})`
                   : palette.surface;
                 const textColor = isMe ? palette.letterbox : palette.text;
+                const membership = myGroups.find((g) => g.id === activeGroupId);
+                const canDelete = isMe || membership?.role === "owner";
                 return (
                   <div
                     key={m.id}
-                    className="flex"
+                    className="flex group/msg"
                     style={{ justifyContent: isMe ? "flex-end" : "flex-start", gap: "8px", marginTop: grouped ? "-6px" : 0 }}
+                    onMouseEnter={(e) => { const el = e.currentTarget.querySelector(".msg-del-btn"); if (el) el.style.opacity = "1"; }}
+                    onMouseLeave={(e) => { const el = e.currentTarget.querySelector(".msg-del-btn"); if (el) el.style.opacity = "0"; }}
                   >
+                    {isMe && canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDeleteMsg(m.id)}
+                        className={`msg-del-btn self-center flex items-center justify-center rounded-full ${TAP}`}
+                        style={{
+                          width: "24px", height: "24px", flexShrink: 0,
+                          background: palette.field, border: `1px solid ${palette.border}`,
+                          color: palette.textFaint, opacity: 0, transition: "opacity 0.15s ease",
+                        }}
+                        aria-label="Delete message"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
                     {!isMe && (
                       <span style={{ width: "28px", flexShrink: 0 }}>
                         {!grouped && <Avatar name={m.author} size={28} />}
@@ -14123,6 +14197,21 @@ if (activeTab === "community") {
                         {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
                     </div>
+                    {!isMe && canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDeleteMsg(m.id)}
+                        className={`msg-del-btn self-center flex items-center justify-center rounded-full ${TAP}`}
+                        style={{
+                          width: "24px", height: "24px", flexShrink: 0,
+                          background: palette.field, border: `1px solid ${palette.border}`,
+                          color: palette.textFaint, opacity: 0, transition: "opacity 0.15s ease",
+                        }}
+                        aria-label="Delete message"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -16698,10 +16787,12 @@ if (activeTab === "community") {
         </div>
       )}
 
-       {groupManageOpen && (() => {
+
+{groupManageOpen && (() => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
   const isOwner = membership?.role === "owner";
   const authors = Array.from(new Set(groupMessages.map((m) => m.author))).filter(Boolean);
+  const tabs = ["members", ...(isOwner ? ["settings", "danger"] : [])];
 
   return (
     <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
@@ -16715,8 +16806,8 @@ if (activeTab === "community") {
             <div style={{ fontFamily: display, fontSize: "15px", fontWeight: 700, color: palette.text }}>
               {membership?.name || "Group"}
             </div>
-            <div style={{ color: palette.textFaint, fontSize: "10.5px", fontFamily: mono, textTransform: "uppercase" }}>
-              {isOwner ? "You are the owner" : "Member"}
+            <div style={{ color: isOwner ? palette.gold : palette.textFaint, fontSize: "10.5px", fontFamily: mono, textTransform: "uppercase", fontWeight: isOwner ? 700 : 400 }}>
+              {isOwner ? "★ You own this group" : "Member"}
             </div>
           </div>
           <button type="button" onClick={() => setGroupManageOpen(false)} className={TAP} style={{ color: palette.textFaint }}>
@@ -16725,15 +16816,15 @@ if (activeTab === "community") {
         </div>
 
         <div className="flex gap-2 px-4 pt-3">
-          {["members", ...(isOwner ? ["settings"] : [])].map((t) => {
+          {tabs.map((t) => {
             const active = groupManageTab === t;
             return (
               <button key={t} type="button" onClick={() => setGroupManageTab(t)}
                 className={`px-3 py-1.5 rounded-full ${TAP}`}
                 style={{
-                  background: active ? palette.gold : palette.field,
-                  color: active ? palette.letterbox : palette.textMuted,
-                  border: `1px solid ${active ? palette.gold : palette.border}`,
+                  background: active ? (t === "danger" ? palette.red : palette.gold) : palette.field,
+                  color: active ? (t === "danger" ? "#FFFFFF" : palette.letterbox) : palette.textMuted,
+                  border: `1px solid ${active ? (t === "danger" ? palette.red : palette.gold) : palette.border}`,
                   fontFamily: mono, fontSize: "12px", fontWeight: 700, textTransform: "capitalize",
                 }}>
                 {t}
@@ -16760,7 +16851,7 @@ if (activeTab === "community") {
                   <span style={{ color: palette.text, fontSize: "13px" }}>{a}</span>
                   {isOwner && (
                     <button type="button" onClick={() => setPendingKick(a)} className={TAP}
-                      style={{ color: palette.red, fontSize: "11px", fontFamily: mono }}>
+                      style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
                       Remove
                     </button>
                   )}
@@ -16771,8 +16862,13 @@ if (activeTab === "community") {
                   No other members have posted yet — this list is built from chat activity.
                 </p>
               )}
+              {isOwner && (
+                <p className="text-xs mt-3" style={{ color: palette.textFaint }}>
+                  As owner, you can remove members and delete anyone's messages from the chat.
+                </p>
+              )}
             </>
-          ) : (
+          ) : groupManageTab === "settings" ? (
             <>
               <span className="block mb-1.5 uppercase" style={{ color: palette.textMuted, letterSpacing: "0.08em", fontSize: "10.5px" }}>Group Name</span>
               <input type="text" value={manageNameDraft} onChange={(e) => setManageNameDraft(e.target.value)} maxLength={40}
@@ -16782,13 +16878,48 @@ if (activeTab === "community") {
               <input type="text" value={manageDescDraft} onChange={(e) => setManageDescDraft(e.target.value)} maxLength={100}
                 className="w-full rounded-xl px-3 py-2.5 mb-3 bg-transparent outline-none"
                 style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "13px" }} />
-              <button type="button" onClick={renameCommunityGroup} className={`w-full rounded-xl py-2.5 ${TAP}`}
+              <button type="button" onClick={renameCommunityGroup} className={`w-full rounded-xl py-2.5 mb-4 ${TAP}`}
                 style={{ background: palette.gold, color: palette.letterbox, fontFamily: mono, fontSize: "13px", fontWeight: 700 }}>
                 Save Changes
               </button>
+
+              <span className="block mb-1.5 uppercase" style={{ color: palette.textMuted, letterSpacing: "0.08em", fontSize: "10.5px" }}>Invite Code</span>
+              <p className="text-xs mb-2" style={{ color: palette.textFaint }}>
+                Regenerating invalidates the old code — anyone who hasn't joined yet will need the new one.
+              </p>
+              <button type="button" onClick={regenerateGroupCode} disabled={regeneratingCode}
+                className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 ${TAP}`}
+                style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12.5px", fontWeight: 600 }}>
+                <RotateCcw size={13} />
+                {regeneratingCode ? "Generating…" : "Regenerate Invite Code"}
+              </button>
+              {newInviteCode && (
+                <div className="rounded-xl px-3 py-2.5 mt-2" style={{ background: `${palette.gold}14`, border: `1px solid ${palette.gold}55` }}>
+                  <div style={{ fontSize: "9.5px", color: palette.gold, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "2px" }}>New Code</div>
+                  <div style={{ fontFamily: mono, fontSize: "14px", fontWeight: 700, color: palette.text }}>{newInviteCode}</div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="rounded-xl p-3.5 mb-3" style={{ background: `${palette.red}0E`, border: `1px solid ${palette.red}44` }}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <AlertTriangle size={14} style={{ color: palette.red }} />
+                  <span style={{ color: palette.red, fontSize: "12.5px", fontWeight: 700 }}>Danger Zone</span>
+                </div>
+                <p className="text-xs" style={{ color: palette.textMuted }}>
+                  Deleting the group removes it for every member permanently. This can't be undone.
+                </p>
+              </div>
+              <button type="button" onClick={() => setPendingDeleteGroup(true)}
+                className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 ${TAP}`}
+                style={{ background: palette.red, color: "#FFFFFF", fontFamily: mono, fontSize: "13px", fontWeight: 700 }}>
+                <Trash2 size={14} />
+                Delete Group Permanently
+              </button>
             </>
           )}
-          {manageMsg && <p className="text-xs mt-1" style={{ color: palette.textFaint }}>{manageMsg}</p>}
+          {manageMsg && <p className="text-xs mt-3" style={{ color: palette.textFaint }}>{manageMsg}</p>}
         </div>
 
         <div className="p-4" style={{ borderTop: `1px solid ${palette.border}` }}>
@@ -16802,6 +16933,33 @@ if (activeTab === "community") {
     </div>
   );
 })()}
+
+{pendingDeleteMsg && (
+  <div className="fixed inset-0 flex items-center justify-center z-50 p-6" style={{ background: "rgba(5,7,12,0.85)" }} onClick={() => setPendingDeleteMsg(null)}>
+    <div className="w-full modal-in rounded-2xl p-5" style={{ maxWidth: "300px", background: palette.surface, border: `1px solid ${palette.border}` }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ color: palette.text, fontSize: "14px", fontWeight: 600, marginBottom: "6px" }}>Delete this message?</div>
+      <p className="text-xs mb-4" style={{ color: palette.textMuted }}>This can't be undone.</p>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setPendingDeleteMsg(null)} className={`flex-1 rounded-lg py-2.5 ${TAP}`} style={{ background: "transparent", border: `1px solid ${palette.border}`, color: palette.textMuted, fontFamily: mono, fontSize: "13px" }}>Cancel</button>
+        <button type="button" onClick={() => deleteCommunityMessage(pendingDeleteMsg)} className={`flex-1 rounded-lg py-2.5 ${TAP}`} style={{ background: palette.red, color: "#FFFFFF", fontFamily: mono, fontSize: "13px", fontWeight: 600 }}>Delete</button>
+      </div>
+    </div>
+  </div>
+)}
+
+{pendingDeleteGroup && (
+  <div className="fixed inset-0 flex items-center justify-center z-50 p-6" style={{ background: "rgba(5,7,12,0.85)" }} onClick={() => setPendingDeleteGroup(false)}>
+    <div className="w-full modal-in rounded-2xl p-5" style={{ maxWidth: "320px", background: palette.surface, border: `1px solid ${palette.red}` }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ color: palette.text, fontSize: "14px", fontWeight: 600, marginBottom: "6px" }}>Delete this group permanently?</div>
+      <p className="text-xs mb-4" style={{ color: palette.textMuted }}>Every member loses access and all messages are lost. This can't be undone.</p>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setPendingDeleteGroup(false)} className={`flex-1 rounded-lg py-2.5 ${TAP}`} style={{ background: "transparent", border: `1px solid ${palette.border}`, color: palette.textMuted, fontFamily: mono, fontSize: "13px" }}>Cancel</button>
+        <button type="button" onClick={deleteCommunityGroupPermanently} className={`flex-1 rounded-lg py-2.5 ${TAP}`} style={{ background: palette.red, color: "#FFFFFF", fontFamily: mono, fontSize: "13px", fontWeight: 700 }}>Delete Forever</button>
+      </div>
+    </div>
+  </div>
+)}
+
 
 {pendingKick && (
   <div className="fixed inset-0 flex items-center justify-center z-50 p-6" style={{ background: "rgba(5,7,12,0.85)" }} onClick={() => setPendingKick(null)}>
