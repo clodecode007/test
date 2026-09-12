@@ -4151,6 +4151,19 @@ const [pendingDeleteMsg, setPendingDeleteMsg] = useState(null);
 const [pendingDeleteGroup, setPendingDeleteGroup] = useState(false);
 const [regeneratingCode, setRegeneratingCode] = useState(false);
 const [newInviteCode, setNewInviteCode] = useState("");
+const [groupAvatarUploading, setGroupAvatarUploading] = useState(false);
+const groupAvatarInputRef = useRef(null);
+const [groupAvatarMap, setGroupAvatarMap] = useState({});
+const [groupMembersList, setGroupMembersList] = useState([]);
+const [groupMembersLoaded, setGroupMembersLoaded] = useState(false);
+const [communityPanelTab, setCommunityPanelTab] = useState("chat");
+const [groupPosts, setGroupPosts] = useState([]);
+const [groupPostsLoaded, setGroupPostsLoaded] = useState(false);
+const [newPostText, setNewPostText] = useState("");
+const [newPostImage, setNewPostImage] = useState(null);
+const [postImageUploading, setPostImageUploading] = useState(false);
+const postImageInputRef = useRef(null);
+const [pinnedMessageId, setPinnedMessageId] = useState(null);
 
 const renameCommunityGroup = async () => {
   const membership = myGroups.find((g) => g.id === activeGroupId);
@@ -4235,6 +4248,162 @@ const deleteCommunityGroupPermanently = async () => {
   setActiveGroupId(null);
   setPendingDeleteGroup(false);
   setGroupManageOpen(false);
+};
+
+
+useEffect(() => {
+  setCommunityPanelTab("chat");
+  if (!activeGroupId) {
+    setGroupMembersList([]);
+    setGroupMembersLoaded(false);
+    setPinnedMessageId(null);
+    return;
+  }
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  let cancelled = false;
+  (async () => {
+    try {
+      const data = await communityApi(`/groups/${activeGroupId}`, {
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      if (!cancelled) {
+        setPinnedMessageId(data.pinned_message_id || null);
+        if (data.avatar) setGroupAvatarMap((cur) => ({ ...cur, [activeGroupId]: data.avatar }));
+      }
+    } catch (err) {}
+    try {
+      const memData = await communityApi(`/groups/${activeGroupId}/members`, {
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      if (!cancelled) setGroupMembersList(memData.members || []);
+    } catch (err) {
+    } finally {
+      if (!cancelled) setGroupMembersLoaded(true);
+    }
+  })();
+  return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [activeGroupId]);
+
+useEffect(() => {
+  if (!activeGroupId || communityPanelTab !== "posts") return;
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  let cancelled = false;
+  setGroupPostsLoaded(false);
+  (async () => {
+    try {
+      const data = await communityApi(`/groups/${activeGroupId}/posts`, {
+        headers: { Authorization: `Bearer ${membership.token}` },
+      });
+      if (!cancelled) setGroupPosts(data.posts || []);
+    } catch (err) {
+      if (!cancelled) setCommunityApiError(err.message);
+    } finally {
+      if (!cancelled) setGroupPostsLoaded(true);
+    }
+  })();
+  return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [activeGroupId, communityPanelTab]);
+
+
+const uploadGroupAvatar = async (file) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership || !file) return;
+  setGroupAvatarUploading(true);
+  try {
+    const dataUrl = await resizeImageFile(file, 300);
+    const data = await communityApi(`/groups/${activeGroupId}/avatar`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${membership.token}` },
+      body: JSON.stringify({ avatar: dataUrl }),
+    });
+    setGroupAvatarMap((cur) => ({ ...cur, [activeGroupId]: data.avatar }));
+    setManageMsg("Group photo updated.");
+  } catch (err) {
+    setManageMsg(err.message || "Couldn't update the group photo.");
+  } finally {
+    setGroupAvatarUploading(false);
+  }
+};
+
+const handleGroupAvatarChange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (file) uploadGroupAvatar(file);
+};
+
+const pinCommunityMessage = async (messageId) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/pin`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${membership.token}` },
+      body: JSON.stringify({ messageId }),
+    });
+    setPinnedMessageId(messageId);
+  } catch (err) {
+    setCommunityApiError(err.message || "Couldn't pin that message.");
+  }
+};
+
+const unpinCommunityMessage = () => pinCommunityMessage(null);
+
+const uploadPostImage = async (file) => {
+  if (!file) return;
+  setPostImageUploading(true);
+  try {
+    const dataUrl = await resizeImageFile(file, 800);
+    setNewPostImage(dataUrl);
+  } catch (err) {
+    setManageMsg("Couldn't attach that image.");
+  } finally {
+    setPostImageUploading(false);
+  }
+};
+
+const handlePostImageChange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (file) uploadPostImage(file);
+};
+
+const createCommunityPost = async () => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  if (!newPostText.trim() && !newPostImage) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/posts`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${membership.token}` },
+      body: JSON.stringify({ text: newPostText.trim(), image: newPostImage }),
+    });
+    setNewPostText("");
+    setNewPostImage(null);
+    const data = await communityApi(`/groups/${activeGroupId}/posts`, {
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setGroupPosts(data.posts || []);
+  } catch (err) {
+    setCommunityApiError(err.message || "Couldn't post that.");
+  }
+};
+
+const deleteCommunityPost = async (postId) => {
+  const membership = myGroups.find((g) => g.id === activeGroupId);
+  if (!membership) return;
+  try {
+    await communityApi(`/groups/${activeGroupId}/posts/${postId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${membership.token}` },
+    });
+    setGroupPosts((cur) => cur.filter((p) => p.id !== postId));
+  } catch (err) {
+    setCommunityApiError(err.message || "Couldn't delete that post.");
+  }
 };
 
 
@@ -13983,23 +14152,35 @@ if (activeTab === "community") {
     return AVATAR_HUES[h % AVATAR_HUES.length];
   };
 
-  const Avatar = ({ name, size = 40, ring, online }) => {
+  const Avatar = ({ name, size = 40, ring, online, src }) => {
     const a = avatarStyleFor(name || "?");
     return (
       <span className="relative inline-flex flex-shrink-0" style={{ width: `${size}px`, height: `${size}px` }}>
-        <span
-          className="flex items-center justify-center rounded-full w-full h-full"
-          style={{
-            background: a.bg,
-            color: a.fg,
-            fontFamily: mono,
-            fontWeight: 800,
-            fontSize: `${Math.round(size * 0.38)}px`,
-            boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
-          }}
-        >
-          {getInitials(name)}
-        </span>
+        {src ? (
+          <img
+            src={src}
+            alt={name || "avatar"}
+            className="rounded-full w-full h-full"
+            style={{
+              objectFit: "cover",
+              boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
+            }}
+          />
+        ) : (
+          <span
+            className="flex items-center justify-center rounded-full w-full h-full"
+            style={{
+              background: a.bg,
+              color: a.fg,
+              fontFamily: mono,
+              fontWeight: 800,
+              fontSize: `${Math.round(size * 0.38)}px`,
+              boxShadow: ring ? `0 0 0 2px ${palette.surface}, 0 0 0 3.5px ${palette.gold}66` : "0 2px 6px rgba(0,0,0,0.25)",
+            }}
+          >
+            {getInitials(name)}
+          </span>
+        )}
         {online && (
           <span
             style={{
@@ -14044,14 +14225,14 @@ if (activeTab === "community") {
               <ChevronLeft size={16} />
             </button>
           )}
-          <Avatar name={group ? group.name : "?"} size={40} online />
+          <Avatar name={group ? group.name : "?"} size={40} online src={groupAvatarMap[activeGroupId]} />
           <div className="flex-1 min-w-0">
             <div style={{ fontFamily: display, fontSize: "15px", fontWeight: 700, color: palette.text }} className="truncate">
               {group ? group.name : "Group"}
             </div>
             <div className="flex items-center gap-1.5" style={{ color: palette.textFaint, fontSize: "11px", fontFamily: mono }}>
               <span style={{ width: "6px", height: "6px", borderRadius: "999px", background: palette.green, display: "inline-block", boxShadow: `0 0 6px ${palette.green}` }} />
-              Live · {groupMessages.length} message{groupMessages.length === 1 ? "" : "s"}
+              Live · {groupMembersList.length || "…"} member{groupMembersList.length === 1 ? "" : "s"} · {groupMessages.length} message{groupMessages.length === 1 ? "" : "s"}
             </div>
           </div>
           <button
@@ -14071,6 +14252,142 @@ if (activeTab === "community") {
             <Users size={15} />
           </button>
         </div>
+
+             {pinnedMessageId && (() => {
+          const pinned = groupMessages.find((m) => m.id === pinnedMessageId);
+          if (!pinned) return null;
+          return (
+            <div
+              className="flex items-start gap-2 px-4 py-2.5 flex-shrink-0"
+              style={{ background: `${palette.gold}12`, borderBottom: `1px solid ${palette.gold}33` }}
+            >
+              <Bell size={13} style={{ color: palette.gold, marginTop: "2px", flexShrink: 0 }} />
+              <div className="flex-1 min-w-0">
+                <div style={{ color: palette.gold, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Pinned · {pinned.author}
+                </div>
+                <div className="truncate" style={{ color: palette.text, fontSize: "12.5px" }}>
+                  {pinned.type === "signal" ? `${pinned.pair} ${pinned.direction === "sell" ? "Sell" : "Buy"} signal` : pinned.text}
+                </div>
+              </div>
+              {group?.role === "owner" && (
+                <button type="button" onClick={unpinCommunityMessage} className={TAP} style={{ color: palette.textFaint, flexShrink: 0 }} aria-label="Unpin">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
+        <div className="flex gap-2 px-4 pt-3 pb-1 flex-shrink-0">
+          {[{ id: "chat", label: "Chat" }, { id: "posts", label: "Announcements" }].map((t) => {
+            const active = communityPanelTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setCommunityPanelTab(t.id)}
+                className={`px-3 py-1.5 rounded-full transition-colors ${TAP}`}
+                style={{
+                  background: active ? palette.gold : palette.field,
+                  color: active ? palette.letterbox : palette.textMuted,
+                  border: `1px solid ${active ? palette.gold : palette.border}`,
+                  fontFamily: mono, fontSize: "11.5px", fontWeight: 700,
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {communityPanelTab === "posts" ? (
+          <>
+            <div className="flex-1 px-4 py-4" style={{ overflowY: "auto", minHeight: 0, background: palette.bg }}>
+              {group?.role === "owner" && (
+                <div className="rounded-2xl p-3 mb-4" style={{ background: palette.surface, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}>
+                  <textarea
+                    value={newPostText}
+                    onChange={(e) => setNewPostText(e.target.value)}
+                    placeholder="Write an announcement for the group…"
+                    rows={3}
+                    className="w-full bg-transparent outline-none mb-2"
+                    style={{ color: palette.text, fontSize: "13px", resize: "none" }}
+                  />
+                  {newPostImage && (
+                    <div className="relative inline-block mb-2">
+                      <img src={newPostImage} alt="Post attachment" className="rounded-lg" style={{ width: "96px", height: "96px", objectFit: "cover", border: `1px solid ${palette.border}` }} />
+                      <button type="button" onClick={() => setNewPostImage(null)} className={`absolute flex items-center justify-center rounded-full ${TAP}`} style={{ top: "-6px", right: "-6px", width: "18px", height: "18px", background: palette.red, color: "#FFFFFF" }} aria-label="Remove image">
+                        <X size={11} />
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => postImageInputRef.current && postImageInputRef.current.click()}
+                      disabled={postImageUploading}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${TAP}`}
+                      style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.textMuted, fontSize: "11.5px", fontFamily: mono }}
+                    >
+                      <Camera size={13} />
+                      {postImageUploading ? "Uploading…" : "Add photo"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={createCommunityPost}
+                      disabled={!newPostText.trim() && !newPostImage}
+                      className={`px-4 py-1.5 rounded-lg ${TAP}`}
+                      style={{
+                        background: (newPostText.trim() || newPostImage) ? palette.gold : palette.border,
+                        color: (newPostText.trim() || newPostImage) ? palette.letterbox : palette.textFaint,
+                        fontFamily: mono, fontSize: "12px", fontWeight: 700,
+                      }}
+                    >
+                      Post
+                    </button>
+                  </div>
+                  <input ref={postImageInputRef} type="file" accept="image/*" onChange={handlePostImageChange} style={{ display: "none" }} />
+                </div>
+              )}
+
+              {!groupPostsLoaded ? (
+                <p className="text-xs" style={{ color: palette.textFaint }}>Loading announcements…</p>
+              ) : groupPosts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-center py-10">
+                  <span className="flex items-center justify-center rounded-full mb-3" style={{ width: "48px", height: "48px", background: `${palette.gold}14`, border: `1px solid ${palette.gold}33` }}>
+                    <FileText size={20} style={{ color: palette.gold }} />
+                  </span>
+                  <p className="text-xs" style={{ color: palette.textFaint, maxWidth: "240px" }}>
+                    {group?.role === "owner" ? "Post an update for the group above." : "No announcements yet."}
+                  </p>
+                </div>
+              ) : (
+                groupPosts.map((p) => (
+                  <div key={p.id} className="rounded-2xl p-4 mb-3" style={{ background: palette.surface, border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={p.author} size={26} src={groupAvatarMap[activeGroupId]} />
+                        <span style={{ color: palette.gold, fontSize: "12px", fontWeight: 700 }}>{p.author}</span>
+                        <span style={{ color: palette.textFaint, fontSize: "10.5px", fontFamily: mono }}>
+                          {new Date(p.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      {group?.role === "owner" && (
+                        <button type="button" onClick={() => deleteCommunityPost(p.id)} className={TAP} style={{ color: palette.textFaint }} aria-label="Delete post">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                    {p.text && <p className="text-sm mb-2" style={{ color: palette.text, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{p.text}</p>}
+                    {p.image && <img src={p.image} alt="Post attachment" className="rounded-xl w-full" style={{ maxHeight: "320px", objectFit: "cover", border: `1px solid ${palette.border}` }} />}
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        ) : (
+          <>
 
         {/* Messages */}
         <div
@@ -14196,6 +14513,22 @@ if (activeTab === "community") {
                       <div style={{ color: palette.textFaint, fontSize: "9.5px", fontFamily: mono, marginTop: "3px", textAlign: isMe ? "right" : "left" }}>
                         {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
+                      {group?.role === "owner" && (
+                        <button
+                          type="button"
+                          onClick={() => pinCommunityMessage(pinnedMessageId === m.id ? null : m.id)}
+                          className={TAP}
+                          style={{
+                            color: pinnedMessageId === m.id ? palette.gold : palette.textFaint,
+                            fontSize: "9.5px", fontFamily: mono, marginTop: "3px",
+                            display: "flex", alignItems: "center", gap: "3px",
+                            justifyContent: isMe ? "flex-end" : "flex-start", width: "100%",
+                          }}
+                        >
+                          <Bell size={9} />
+                          {pinnedMessageId === m.id ? "Unpin" : "Pin"}
+                        </button>
+                      )}
                     </div>
                     {!isMe && canDelete && (
                       <button
@@ -14328,6 +14661,8 @@ if (activeTab === "community") {
             <p className="text-xs mt-2" style={{ color: palette.red }}>{communityApiError}</p>
           )}
         </div>
+          </>
+        )}
       </div>
     );
   };
@@ -14377,7 +14712,7 @@ if (activeTab === "community") {
                 border: `1px solid ${active ? `${palette.gold}44` : "transparent"}`,
               }}
             >
-              <Avatar name={g.name} size={34} online={active} />
+              <Avatar name={g.name} size={34} online={active} src={groupAvatarMap[g.id]} />
               <div className="flex-1 min-w-0">
                 <div style={{ color: active ? palette.goldBright : palette.text, fontSize: "13px", fontWeight: active ? 700 : 600 }} className="truncate">
                   {g.name}
@@ -14709,7 +15044,7 @@ if (activeTab === "community") {
                     boxShadow: palette.shadow,
                   }}
                 >
-                  <Avatar name={g.name} size={44} />
+                  <Avatar name={g.name} size={44} src={groupAvatarMap[g.id]} />
                   <div className="flex-1 min-w-0">
                     <div style={{ color: palette.text, fontSize: "14.5px", fontWeight: 700 }} className="truncate">
                       {g.name}
@@ -16834,42 +17169,69 @@ if (activeTab === "community") {
         </div>
 
         <div className="p-4" style={{ overflowY: "auto" }}>
+
+
+
           {groupManageTab === "members" ? (
             <>
-              <div className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
-                style={{ background: palette.field, border: `1px solid ${palette.gold}55` }}>
-                <span style={{ color: palette.text, fontSize: "13px", fontWeight: 600 }}>
-                  {isOwner ? communityUsername : "Owner"}
-                </span>
-                <span style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
-                  Owner
-                </span>
-              </div>
-              {authors.filter((a) => a !== communityUsername).map((a) => (
-                <div key={a} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
-                  style={{ background: palette.field, border: `1px solid ${palette.border}` }}>
-                  <span style={{ color: palette.text, fontSize: "13px" }}>{a}</span>
-                  {isOwner && (
-                    <button type="button" onClick={() => setPendingKick(a)} className={TAP}
-                      style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
-                      Remove
-                    </button>
+              {!groupMembersLoaded ? (
+                <p className="text-xs" style={{ color: palette.textFaint }}>Loading members…</p>
+              ) : (
+                <>
+                  {groupMembersList.map((mem) => (
+                    <div key={mem.username} className="flex items-center justify-between rounded-xl px-3 py-2.5 mb-2"
+                      style={{ background: palette.field, border: `1px solid ${mem.isOwner ? palette.gold + "55" : palette.border}` }}>
+                      <div className="flex items-center gap-2">
+                        <Avatar name={mem.username} size={26} />
+                        <div>
+                          <div style={{ color: palette.text, fontSize: "13px", fontWeight: mem.isOwner ? 600 : 400 }}>{mem.username}</div>
+                          <div style={{ color: palette.textFaint, fontSize: "10px", fontFamily: mono }}>
+                            Joined {new Date(mem.joinedAt).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+                      {mem.isOwner ? (
+                        <span style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}`, borderRadius: "999px", padding: "1px 7px", textTransform: "uppercase" }}>
+                          Owner
+                        </span>
+                      ) : (
+                        isOwner && (
+                          <button type="button" onClick={() => setPendingKick(mem.username)} className={TAP} style={{ color: palette.red, fontSize: "11px", fontFamily: mono, fontWeight: 600 }}>
+                            Remove
+                          </button>
+                        )
+                      )}
+                    </div>
+                  ))}
+                  {groupMembersList.length === 0 && (
+                    <p className="text-xs" style={{ color: palette.textFaint }}>No members found.</p>
                   )}
-                </div>
-              ))}
-              {authors.filter((a) => a !== communityUsername).length === 0 && (
-                <p className="text-xs" style={{ color: palette.textFaint }}>
-                  No other members have posted yet — this list is built from chat activity.
-                </p>
-              )}
-              {isOwner && (
-                <p className="text-xs mt-3" style={{ color: palette.textFaint }}>
-                  As owner, you can remove members and delete anyone's messages from the chat.
-                </p>
+                  {isOwner && (
+                    <p className="text-xs mt-3" style={{ color: palette.textFaint }}>
+                      As owner, you can remove members and delete anyone's messages from the chat.
+                    </p>
+                  )}
+                </>
               )}
             </>
           ) : groupManageTab === "settings" ? (
             <>
+              <span className="block mb-1.5 uppercase" style={{ color: palette.textMuted, letterSpacing: "0.08em", fontSize: "10.5px" }}>Group Photo</span>
+              <div className="flex items-center gap-3 mb-4">
+                <Avatar name={membership?.name || "?"} size={56} src={groupAvatarMap[activeGroupId]} />
+                <button
+                  type="button"
+                  onClick={() => groupAvatarInputRef.current && groupAvatarInputRef.current.click()}
+                  disabled={groupAvatarUploading}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg ${TAP}`}
+                  style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.text, fontFamily: mono, fontSize: "12px", fontWeight: 600 }}
+                >
+                  <Camera size={13} />
+                  {groupAvatarUploading ? "Uploading…" : "Change Photo"}
+                </button>
+                <input ref={groupAvatarInputRef} type="file" accept="image/*" onChange={handleGroupAvatarChange} style={{ display: "none" }} />
+              </div>
+
               <span className="block mb-1.5 uppercase" style={{ color: palette.textMuted, letterSpacing: "0.08em", fontSize: "10.5px" }}>Group Name</span>
               <input type="text" value={manageNameDraft} onChange={(e) => setManageNameDraft(e.target.value)} maxLength={40}
                 className="w-full rounded-xl px-3 py-2.5 mb-3 bg-transparent outline-none"
