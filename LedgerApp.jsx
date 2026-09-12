@@ -14689,12 +14689,13 @@ if (activeTab === "community") {
   };
 
   // ---------- Sidebar (desktop only, persistent) ----------
-  const renderSidebar = () => (
+const renderSidebar = () => (
     <div
-      className="flex flex-col flex-shrink-0"
+      className="flex flex-col flex-shrink-0 rounded-2xl overflow-hidden"
       style={{
         width: "260px",
-        borderRight: `1px solid ${palette.border}`,
+        border: `1px solid ${palette.border}`,
+        boxShadow: palette.shadow,
         background: palette.surface,
       }}
     >
@@ -14896,15 +14897,18 @@ if (activeTab === "community") {
         </p>
       </>
     );
-  } else if (isDesktop) {
+} else if (isDesktop) {
     // ---------- DESKTOP: persistent sidebar + chat pane (Discord/Telegram merged) ----------
     body = (
       <div
-        className="flex rounded-2xl overflow-hidden"
-        style={{ height: "calc(100vh - 148px)", border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}
+        className="flex gap-4"
+        style={{ height: "calc(100vh - 148px)" }}
       >
         {renderSidebar()}
-        <div className="flex-1 min-w-0">
+        <div
+          className="flex-1 min-w-0 rounded-2xl overflow-hidden"
+          style={{ border: `1px solid ${palette.border}`, boxShadow: palette.shadow }}
+        >
           {activeGroupId ? (
             renderChatPanel({ background: palette.bg })
           ) : (
