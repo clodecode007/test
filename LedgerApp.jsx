@@ -14993,36 +14993,159 @@ const renderSidebar = () => (
         </button>
       </div>
 
+      <div className="flex gap-1.5 px-2.5 pt-2.5 pb-1">
+        {[{ id: "mine", label: "Groups" }, { id: "discover", label: "Discover" }].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => { setCommunityLobbyTab(t.id); if (t.id === "discover" && !discoverLoaded) loadDiscoverGroups(); }}
+            className={`flex-1 px-2 py-1.5 rounded-lg ${TAP}`}
+            style={{
+              background: communityLobbyTab === t.id ? palette.gold : palette.field,
+              color: communityLobbyTab === t.id ? palette.letterbox : palette.textMuted,
+              border: `1px solid ${communityLobbyTab === t.id ? palette.gold : palette.border}`,
+              fontFamily: mono, fontSize: "11px", fontWeight: 700,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto p-2">
-        {myGroups.map((g) => {
-          const active = g.id === activeGroupId;
-          return (
+
+
+{communityLobbyTab === "discover" ? (
+  <>
+    <div className="flex items-center rounded-lg px-2.5 mb-2" style={{ background: palette.field, border: `1px solid ${palette.border}` }}>
+      <Search size={13} style={{ color: palette.textFaint, flexShrink: 0 }} />
+      <input
+        type="text"
+        value={discoverSearch}
+        onChange={(e) => setDiscoverSearch(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") loadDiscoverGroups(); }}
+        placeholder="Search public groups"
+        className="w-full bg-transparent py-2 px-1.5 outline-none"
+        style={{ color: palette.text, fontSize: "12px" }}
+      />
+      <button
+        type="button"
+        onClick={loadDiscoverGroups}
+        className={TAP}
+        style={{ color: palette.gold, fontSize: "10.5px", fontFamily: mono, flexShrink: 0, paddingRight: "4px" }}
+      >
+        Go
+      </button>
+    </div>
+
+    {pendingJoinRequestsLoaded && pendingJoinRequests.length > 0 && (
+      <div className="mb-2">
+        <span className="block mb-1.5 uppercase px-1" style={{ color: palette.textFaint, letterSpacing: "0.07em", fontSize: "9.5px", fontWeight: 700 }}>
+          Your Pending Requests
+        </span>
+        {pendingJoinRequests.map((req) => (
+          <div
+            key={req.id}
+            className="flex items-center justify-between rounded-xl px-2.5 py-2 mb-1.5"
+            style={{ background: palette.surface, border: `1px solid ${palette.gold}44` }}
+          >
+            <span className="truncate" style={{ color: palette.text, fontSize: "12px" }}>{req.name}</span>
             <button
-              key={g.id}
               type="button"
-              onClick={() => setActiveGroupId(g.id)}
-              className={`w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 mb-1 text-left ${TAP}`}
-              style={{
-                background: active ? `${palette.gold}16` : "transparent",
-                border: `1px solid ${active ? `${palette.gold}44` : "transparent"}`,
-              }}
+              onClick={() => checkJoinRequestStatus(req)}
+              className={`px-2.5 py-1 rounded-lg flex-shrink-0 ${TAP}`}
+              style={{ background: palette.field, border: `1px solid ${palette.border}`, color: palette.gold, fontFamily: mono, fontSize: "10px", fontWeight: 700 }}
             >
-              <Avatar name={g.name} size={34} online={active} src={groupAvatarMap[g.id]} />
+              Check
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {!discoverLoaded ? (
+      <p className="text-xs px-1" style={{ color: palette.textFaint }}>Loading…</p>
+    ) : discoverGroups.length === 0 ? (
+      <p className="text-xs px-1" style={{ color: palette.textFaint }}>No public groups found.</p>
+    ) : (
+      discoverGroups.map((g) => {
+        const alreadyIn = myGroups.some((m) => m.id === g.id);
+        const requested = pendingJoinRequests.some((r) => r.id === g.id);
+        return (
+          <div key={g.id} className="rounded-xl px-2.5 py-2 mb-1.5" style={{ background: palette.surface, border: `1px solid ${palette.border}` }}>
+            <div className="flex items-center gap-2">
+              <Avatar name={g.name} size={30} />
               <div className="flex-1 min-w-0">
-                <div style={{ color: active ? palette.goldBright : palette.text, fontSize: "13px", fontWeight: active ? 700 : 600 }} className="truncate">
-                  {g.name}
-                </div>
-                <div style={{ color: palette.textFaint, fontSize: "10.5px" }} className="truncate">
-                  {g.description || "Private trading group"}
+                <div className="truncate" style={{ color: palette.text, fontSize: "12.5px", fontWeight: 600 }}>{g.name}</div>
+                <div className="truncate" style={{ color: palette.textFaint, fontSize: "10px" }}>
+                  {g.description || "Public group"}{g.memberCount != null ? ` · ${g.memberCount} members` : ""}
                 </div>
               </div>
-            </button>
-          );
-        })}
-        {myGroups.length === 0 && (
-          <p className="text-xs px-2 py-3" style={{ color: palette.textFaint }}>
-            No groups yet — create or join one below.
-          </p>
+              <button
+                type="button"
+                onClick={() => requestToJoinGroup(g)}
+                disabled={alreadyIn || requested}
+                className={`px-2.5 py-1 rounded-lg flex-shrink-0 ${TAP}`}
+                style={{
+                  background: alreadyIn || requested ? palette.field : palette.gold,
+                  color: alreadyIn || requested ? palette.textFaint : palette.letterbox,
+                  border: `1px solid ${alreadyIn || requested ? palette.border : palette.gold}`,
+                  fontFamily: mono, fontSize: "10.5px", fontWeight: 700,
+                }}
+              >
+                {alreadyIn ? "Joined" : requested ? "Sent" : "Join"}
+              </button>
+            </div>
+            {Array.isArray(g.tags) && g.tags.length > 0 && (
+              <div className="flex gap-1 flex-wrap mt-1.5" style={{ paddingLeft: "38px" }}>
+                {g.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    style={{ fontSize: "9px", fontFamily: mono, color: palette.gold, border: `1px solid ${palette.gold}55`, borderRadius: "999px", padding: "1px 6px" }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })
+    )}
+  </>
+) : (
+          <>
+            {myGroups.map((g) => {
+              const active = g.id === activeGroupId;
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => setActiveGroupId(g.id)}
+                  className={`w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 mb-1 text-left ${TAP}`}
+                  style={{
+                    background: active ? `${palette.gold}16` : "transparent",
+                    border: `1px solid ${active ? `${palette.gold}44` : "transparent"}`,
+                  }}
+                >
+                  <Avatar name={g.name} size={34} online={active} src={groupAvatarMap[g.id]} />
+                  <div className="flex-1 min-w-0">
+                    <div style={{ color: active ? palette.goldBright : palette.text, fontSize: "13px", fontWeight: active ? 700 : 600 }} className="truncate">
+                      {g.name}
+                    </div>
+                    <div style={{ color: palette.textFaint, fontSize: "10.5px" }} className="truncate">
+                      {g.description || "Private trading group"}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+            {myGroups.length === 0 && (
+              <p className="text-xs px-2 py-3" style={{ color: palette.textFaint }}>
+                No groups yet — create or join one below.
+              </p>
+            )}
+          </>
         )}
       </div>
 
