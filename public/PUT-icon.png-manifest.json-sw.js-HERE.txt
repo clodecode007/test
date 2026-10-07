@@ -1,3 +1,0 @@
-Move your existing icon.png, manifest.json and sw.js into this public/ folder.
-Vite copies everything in public/ to the site root, so your PWA files keep working.
-Then delete this txt file.
